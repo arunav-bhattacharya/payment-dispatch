@@ -1,12 +1,16 @@
 package com.payment.dispatcher.payment.init
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.payment.dispatcher.payment.model.*
+import com.payment.dispatcher.payment.model.AppliedRule
+import com.payment.dispatcher.payment.model.EnrichmentData
+import com.payment.dispatcher.payment.model.PaymentExecContext
+import com.payment.dispatcher.payment.model.PaymentRequest
+import com.payment.dispatcher.payment.model.RoutingDetails
+import com.payment.dispatcher.payment.model.ValidationResult
 import io.quarkiverse.temporal.TemporalActivity
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import org.jboss.logging.Logger
-import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -74,18 +78,20 @@ class PaymentInitActivitiesImpl : PaymentInitActivities {
         return objectMapper.writeValueAsString(result)
     }
 
-    override fun calculateFees(paymentId: String, requestJson: String): String {
-        log.debugf("Calculating fees for payment %s", paymentId)
-        // TODO: Calculate fees based on payment type, amount, corridor,
-        //       customer tier, fee schedule, etc.
-        val result = FeeCalculation(
-            totalFee = BigDecimal("2.50"),
-            components = listOf(
-                FeeComponent("PROCESSING", BigDecimal("1.50"), "Standard processing fee"),
-                FeeComponent("NETWORK", BigDecimal("1.00"), "Network transmission fee")
-            )
-        )
-        return objectMapper.writeValueAsString(result)
+    override fun persistScheduledPayment(paymentId: String, requestJson: String): String {
+        log.infof("Persisting payment %s with SCHEDULED status", paymentId)
+        // TODO: Persist the payment record in the payments database with SCHEDULED status.
+        // This is the first durable business state — the payment is now visible in the system.
+        //
+        // Example:
+        //   INSERT INTO PAYMENTS (payment_id, status, amount, currency, ...)
+        //   VALUES (?, 'SCHEDULED', ?, ?, ...)
+        //
+        // The payment status lifecycle is:
+        //   SCHEDULED → ACCEPTED → PROCESSING
+
+        log.infof("Payment %s persisted with status SCHEDULED", paymentId)
+        return paymentId
     }
 
     override fun determineExecTime(paymentId: String, requestJson: String): String {
@@ -108,15 +114,13 @@ class PaymentInitActivitiesImpl : PaymentInitActivities {
         requestJson: String,
         validationResultJson: String,
         enrichmentDataJson: String,
-        appliedRulesJson: String,
-        feeCalculationJson: String
+        appliedRulesJson: String
     ): PaymentExecContext {
         val request = objectMapper.readValue(requestJson, PaymentRequest::class.java)
         val validation = objectMapper.readValue(validationResultJson, ValidationResult::class.java)
         val enrichment = objectMapper.readValue(enrichmentDataJson, EnrichmentData::class.java)
         val rules: List<AppliedRule> = objectMapper.readValue(appliedRulesJson,
             objectMapper.typeFactory.constructCollectionType(List::class.java, AppliedRule::class.java))
-        val fees = objectMapper.readValue(feeCalculationJson, FeeCalculation::class.java)
 
         return PaymentExecContext(
             paymentId = paymentId,
@@ -129,7 +133,6 @@ class PaymentInitActivitiesImpl : PaymentInitActivities {
             validationResult = validation,
             enrichmentData = enrichment,
             appliedRules = rules,
-            feeCalculation = fees,
             fxRateSnapshot = null // TODO: Add FX rate lookup if cross-currency
         )
     }

@@ -2,16 +2,13 @@ package com.payment.dispatcher.framework.repository
 
 import com.payment.dispatcher.framework.model.ClaimedItem
 import com.payment.dispatcher.framework.model.QueueStatus
+import com.payment.dispatcher.framework.repository.tables.ExecContextTable
 import com.payment.dispatcher.framework.repository.tables.ExecQueueTable
 import com.payment.dispatcher.framework.repository.tables.ExecRateConfigTable
 import io.agroal.api.AgroalDataSource
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import org.jetbrains.exposed.sql.*
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.plus
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jboss.logging.Logger
@@ -95,6 +92,8 @@ class DispatchQueueRepository {
         }
 
         // Step 3: Fetch full details via Exposed DSL (no locking needed)
+        // Joins with PAYMENT_EXEC_CONTEXT to pre-load context JSON alongside queue items.
+        // This eliminates a separate Oracle round-trip in the exec workflow.
         return transaction {
             val configRow = ExecRateConfigTable.selectAll()
                 .where { ExecRateConfigTable.itemType eq itemType }
@@ -104,7 +103,8 @@ class DispatchQueueRepository {
                 ?: error("No EXEC_RATE_CONFIG found for itemType=$itemType")
             val execTaskQueue = configRow[ExecRateConfigTable.execTaskQueue]
 
-            ExecQueueTable.selectAll()
+            (ExecQueueTable leftJoin ExecContextTable)
+                .selectAll()
                 .where { ExecQueueTable.dispatchBatchId eq batchId }
                 .orderBy(ExecQueueTable.scheduledExecTime to SortOrder.ASC)
                 .map { row ->
@@ -114,7 +114,8 @@ class DispatchQueueRepository {
                         scheduledExecTime = row[ExecQueueTable.scheduledExecTime].toString(),
                         initWorkflowId = row[ExecQueueTable.initWorkflowId],
                         execWorkflowType = execWorkflowType,
-                        execTaskQueue = execTaskQueue
+                        execTaskQueue = execTaskQueue,
+                        contextJson = row[ExecContextTable.contextJson]
                     )
                 }
         }
@@ -217,7 +218,7 @@ class DispatchQueueRepository {
         transaction {
             val updated = ExecQueueTable.update({
                 (ExecQueueTable.paymentId eq itemId) and
-                (ExecQueueTable.queueStatus eq QueueStatus.CLAIMED.name)
+                        (ExecQueueTable.queueStatus eq QueueStatus.CLAIMED.name)
             }) {
                 it[queueStatus] = QueueStatus.DISPATCHED.name
                 it[dispatchedAt] = Instant.now()
@@ -239,7 +240,7 @@ class DispatchQueueRepository {
         transaction {
             ExecQueueTable.update({
                 (ExecQueueTable.paymentId eq itemId) and
-                (ExecQueueTable.queueStatus eq QueueStatus.DISPATCHED.name)
+                        (ExecQueueTable.queueStatus eq QueueStatus.DISPATCHED.name)
             }) {
                 it[queueStatus] = QueueStatus.COMPLETED.name
                 it[completedAt] = Instant.now()
@@ -272,7 +273,7 @@ class DispatchQueueRepository {
 
             ExecQueueTable.update({
                 (ExecQueueTable.paymentId eq itemId) and
-                (ExecQueueTable.queueStatus eq QueueStatus.DISPATCHED.name)
+                        (ExecQueueTable.queueStatus eq QueueStatus.DISPATCHED.name)
             }) {
                 it[queueStatus] = newStatus
                 it[retryCount] = newRetryCount
@@ -281,8 +282,10 @@ class DispatchQueueRepository {
             }
 
             if (isDeadLetter) {
-                log.warnf("Item %s moved to DEAD_LETTER after %d retries: %s",
-                    itemId, newRetryCount, error?.take(200))
+                log.warnf(
+                    "Item %s moved to DEAD_LETTER after %d retries: %s",
+                    itemId, newRetryCount, error?.take(200)
+                )
             }
 
             isDeadLetter
@@ -297,10 +300,10 @@ class DispatchQueueRepository {
         transaction {
             ExecQueueTable.update({
                 (ExecQueueTable.paymentId eq itemId) and
-                (ExecQueueTable.queueStatus inList listOf(
-                    QueueStatus.CLAIMED.name,
-                    QueueStatus.FAILED.name
-                ))
+                        (ExecQueueTable.queueStatus inList listOf(
+                            QueueStatus.CLAIMED.name,
+                            QueueStatus.FAILED.name
+                        ))
             }) {
                 it[queueStatus] = QueueStatus.READY.name
                 it[claimedAt] = null
@@ -336,8 +339,8 @@ class DispatchQueueRepository {
                 .select(ExecQueueTable.paymentId, ExecQueueTable.execWorkflowId)
                 .where {
                     (ExecQueueTable.itemType eq itemType) and
-                    (ExecQueueTable.queueStatus eq QueueStatus.CLAIMED.name) and
-                    (ExecQueueTable.claimedAt lessEq staleThreshold)
+                            (ExecQueueTable.queueStatus eq QueueStatus.CLAIMED.name) and
+                            (ExecQueueTable.claimedAt lessEq staleThreshold)
                 }
                 .limit(maxRecovery)
                 .map { row ->
@@ -357,7 +360,7 @@ class DispatchQueueRepository {
         transaction {
             ExecQueueTable.update({
                 (ExecQueueTable.paymentId eq itemId) and
-                (ExecQueueTable.queueStatus eq QueueStatus.CLAIMED.name)
+                        (ExecQueueTable.queueStatus eq QueueStatus.CLAIMED.name)
             }) {
                 it[queueStatus] = QueueStatus.READY.name
                 it[claimedAt] = null
@@ -395,7 +398,7 @@ class DispatchQueueRepository {
             ExecQueueTable.selectAll()
                 .where {
                     (ExecQueueTable.itemType eq itemType) and
-                    (ExecQueueTable.queueStatus eq status.name)
+                            (ExecQueueTable.queueStatus eq status.name)
                 }
                 .count()
         }

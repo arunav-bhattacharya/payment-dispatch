@@ -8,7 +8,7 @@ import java.time.Instant
  * Serialized as JSON CLOB in PAYMENT_EXEC_CONTEXT table.
  * Consumed by Phase B (PaymentExecWorkflow) to execute the payment.
  *
- * Contains all results from validation, enrichment, rules, and fee calculation
+ * Contains all results from validation, enrichment, and rules
  * so that Phase B doesn't need to repeat any of this work.
  *
  * Versioned via [version] field for forward/backward compatibility.
@@ -29,7 +29,6 @@ data class PaymentExecContext(
     val validationResult: ValidationResult? = null,
     val enrichmentData: EnrichmentData? = null,
     val appliedRules: List<AppliedRule> = emptyList(),
-    val feeCalculation: FeeCalculation? = null,
     val fxRateSnapshot: FxRateSnapshot? = null,
 
     // Tracing
@@ -70,17 +69,6 @@ data class AppliedRule(
     val ruleName: String,
     val outcome: String,
     val details: String? = null
-)
-
-data class FeeCalculation(
-    val totalFee: BigDecimal,
-    val components: List<FeeComponent> = emptyList()
-)
-
-data class FeeComponent(
-    val type: String,
-    val amount: BigDecimal,
-    val description: String? = null
 )
 
 data class FxRateSnapshot(

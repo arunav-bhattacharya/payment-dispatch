@@ -5,7 +5,7 @@ import io.temporal.activity.ActivityInterface
 import io.temporal.activity.ActivityMethod
 
 /**
- * Phase A activities: validate, enrich, apply rules, calculate fees.
+ * Phase A activities: validate, enrich, apply rules, persist payment, build context.
  * These represent the existing business logic that runs before payment execution.
  *
  * Activity results are JSON strings for Temporal serialization simplicity.
@@ -26,9 +26,15 @@ interface PaymentInitActivities {
     @ActivityMethod
     fun applyRules(paymentId: String, requestJson: String): String
 
-    /** Calculates fees based on payment type, amount, corridor */
+    /**
+     * Persists the payment in the payments database with SCHEDULED status.
+     * This is the first durable state for the payment — it's now visible
+     * in the system as a scheduled payment awaiting execution.
+     *
+     * @return The persisted payment ID (for confirmation)
+     */
     @ActivityMethod
-    fun calculateFees(paymentId: String, requestJson: String): String
+    fun persistScheduledPayment(paymentId: String, requestJson: String): String
 
     /** Determines the scheduled execution time for this payment */
     @ActivityMethod
@@ -44,7 +50,6 @@ interface PaymentInitActivities {
         requestJson: String,
         validationResultJson: String,
         enrichmentDataJson: String,
-        appliedRulesJson: String,
-        feeCalculationJson: String
+        appliedRulesJson: String
     ): PaymentExecContext
 }

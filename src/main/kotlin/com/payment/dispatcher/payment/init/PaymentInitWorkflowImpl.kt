@@ -9,7 +9,8 @@ import java.time.Duration
 
 /**
  * Phase A implementation: runs all initial processing activities,
- * builds accumulated context, saves it to Oracle, and enqueues for dispatch.
+ * persists the payment as SCHEDULED, builds accumulated context,
+ * saves it to Oracle, and enqueues for dispatch.
  *
  * After saveContextAndEnqueue, the workflow returns "ENQUEUED" and COMPLETES.
  * No Workflow.sleep() — the payment waits in Oracle until dispatch time.
@@ -42,11 +43,13 @@ class PaymentInitWorkflowImpl : PaymentInitWorkflow {
     )
 
     override fun initializePayment(paymentId: String, requestJson: String): String {
-        // ═══ Phase A: Existing initial activities ═══
+        // ═══ Phase A: Validate and enrich ═══
         val validationResult = initActivities.validatePayment(paymentId, requestJson)
         val enrichmentData = initActivities.enrichPayment(paymentId, requestJson)
         val appliedRules = initActivities.applyRules(paymentId, requestJson)
-        val feeCalculation = initActivities.calculateFees(paymentId, requestJson)
+
+        // ═══ Persist payment with SCHEDULED status ═══
+        initActivities.persistScheduledPayment(paymentId, requestJson)
 
         // ═══ Build accumulated context ═══
         val context = initActivities.buildContext(
@@ -54,8 +57,7 @@ class PaymentInitWorkflowImpl : PaymentInitWorkflow {
             requestJson = requestJson,
             validationResultJson = validationResult,
             enrichmentDataJson = enrichmentData,
-            appliedRulesJson = appliedRules,
-            feeCalculationJson = feeCalculation
+            appliedRulesJson = appliedRules
         )
 
         // ═══ Determine execution time ═══

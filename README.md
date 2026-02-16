@@ -10,14 +10,24 @@ When hundreds of thousands of payments are scheduled for the same execution time
 
 Split the single long-lived workflow into **two short-lived workflows** connected by an **Oracle-based dispatch queue**:
 
-- **Phase A** — Validate, enrich, apply rules, calculate fees, persist context, enqueue, and **complete immediately** (no sleep).
+- **Phase A** — Validate, enrich, apply rules, persist payment as SCHEDULED, save context, enqueue, and **complete immediately** (no sleep).
 - **Phase B** — A Temporal Schedule fires a dispatcher every N seconds. The dispatcher claims batches from Oracle using `FOR UPDATE SKIP LOCKED`, then starts execution workflows with `startDelay()` jitter.
 
-This reduces Temporal DB pressure by **~200×** (from 500K sleeping workflows to ~500 concurrent short-lived ones).
+This reduces Temporal DB pressure by **~200x** (from 500K sleeping workflows to ~500 concurrent short-lived ones).
 
 ---
 
 ## Architecture
+
+The system is structured as two distinct phases connected by an Oracle-based dispatch queue. This decouples the payment preparation from payment execution, allowing hundreds of thousands of payments to be prepared ahead of time without consuming Temporal resources.
+
+**Phase A (Payment Initialization)** handles all upfront work — validation, enrichment, rules application — and persists the payment in the payments database with `SCHEDULED` status. It then serializes all accumulated results as a JSON CLOB context and enqueues the payment in the dispatch queue with `READY` status. The init workflow completes immediately after enqueueing — there are no sleeping workflows.
+
+**The Oracle Dispatch Queue** acts as a buffer between the two phases. Payments sit in `READY` status until their scheduled execution time arrives. The queue supports concurrent dispatchers via `FOR UPDATE SKIP LOCKED`, provides built-in retry tracking with dead-letter protection, and stores the accumulated Phase A context as a JSON CLOB so Phase B doesn't repeat any work.
+
+**Phase B (Dispatch & Execution)** is driven by a Temporal Schedule that fires a `DispatcherWorkflow` every 5 seconds. Each cycle reads runtime config (with a kill switch), recovers any stale claims from crashed dispatchers, claims a batch of ready payments using Oracle row-level locking (joining with the context table to **pre-load the JSON CLOB** in the same query), and starts execution workflows with randomized `startDelay()` jitter to prevent thundering herd. The pre-loaded context JSON is passed directly as a workflow parameter — **eliminating a separate Oracle round-trip per execution**. The execution workflow deserializes the context, executes the payment (transitioning it from `SCHEDULED` → `ACCEPTED`), post-processes, sends notifications (transitioning to `PROCESSING`), and marks the dispatch queue entry as `COMPLETED`.
+
+**Observability** is provided through an insert-only audit log in Oracle (every dispatch, failure, and stale recovery is recorded) and Prometheus metrics exported via Micrometer (batch claimed counts, workflow start successes/failures, stale recovery counts, dead-letter counts, and cycle duration timers).
 
 ```mermaid
 graph TB
@@ -26,11 +36,11 @@ graph TB
         INIT_WF --> VALIDATE["Validate Payment"]
         VALIDATE --> ENRICH["Enrich Payment"]
         ENRICH --> RULES["Apply Rules"]
-        RULES --> FEES["Calculate Fees"]
-        FEES --> BUILD_CTX["Build Context"]
+        RULES --> PERSIST["Persist SCHEDULED Payment"]
+        PERSIST --> BUILD_CTX["Build Context"]
         BUILD_CTX --> SAVE_CTX["Save Context (CLOB)"]
         SAVE_CTX --> ENQUEUE["Enqueue (READY)"]
-        ENQUEUE --> COMPLETE_A["Workflow Completes ✓"]
+        ENQUEUE --> COMPLETE_A["Workflow Completes"]
     end
 
     subgraph "Oracle Dispatch Queue"
@@ -42,15 +52,14 @@ graph TB
         SCHEDULE["Temporal Schedule\n(every 5s)"] -->|fires| DISP_WF["DispatcherWorkflow"]
         DISP_WF --> READ_CFG["Read Config"]
         READ_CFG --> STALE["Recover Stale Claims"]
-        STALE --> CLAIM["Claim Batch\n(FOR UPDATE SKIP LOCKED)"]
+        STALE --> CLAIM["Claim Batch\n(FOR UPDATE SKIP LOCKED\n+ pre-load context)"]
         CLAIM --> ORACLE_Q
-        CLAIM --> DISPATCH["Dispatch Batch\n(start exec workflows)"]
-        DISPATCH -->|"startDelay(jitter)"| EXEC_WF["PaymentExecWorkflow"]
-        EXEC_WF --> LOAD_CTX["Load Context"]
-        LOAD_CTX --> ORACLE_CTX
-        LOAD_CTX --> EXECUTE["Execute Payment"]
+        CLAIM --> ORACLE_CTX
+        CLAIM --> DISPATCH["Dispatch Batch\n(pass contextJson)"]
+        DISPATCH -->|"startDelay(jitter)\n+ contextJson param"| EXEC_WF["PaymentExecWorkflow"]
+        EXEC_WF --> EXECUTE["Execute Payment\n(SCHEDULED → ACCEPTED)"]
         EXECUTE --> POST["Post-Process"]
-        POST --> NOTIFY["Send Notifications"]
+        POST --> NOTIFY["Send Notifications\n(ACCEPTED → PROCESSING)"]
         NOTIFY --> CLEANUP["Mark COMPLETED\n+ Delete Context"]
     end
 
@@ -68,7 +77,114 @@ graph TB
 
 ---
 
+## Payment Lifecycle — End-to-End Sequence Diagram
+
+This diagram shows the complete payment lifecycle spanning both phases and the dispatcher. Phase A prepares and enqueues the payment, the dispatcher claims batches and starts execution workflows with pre-loaded context, and Phase B executes the payment using the context passed as a parameter.
+
+```mermaid
+sequenceDiagram
+    participant Client as REST API / Kafka
+    participant IW as PaymentInitWorkflow
+    participant IA as InitActivities
+    participant CA as ContextActivities
+    participant OQ as Oracle Queue
+    participant OC as Oracle Context
+    participant PDB as Payments DB
+    participant DW as DispatcherWorkflow
+    participant DA as DispatcherActivities
+    participant T as Temporal Server
+    participant EW as PaymentExecWorkflow
+    participant EA as ExecActivities
+
+    rect rgb(235, 245, 255)
+    Note over Client,CA: Phase A — Payment Initialization
+
+    Client->>IW: initializePayment(paymentId, requestJson)
+
+    IW->>IA: validatePayment(paymentId, requestJson)
+    IA-->>IW: validationResult
+
+    IW->>IA: enrichPayment(paymentId, requestJson)
+    IA-->>IW: enrichmentData
+
+    IW->>IA: applyRules(paymentId, requestJson)
+    IA-->>IW: appliedRules
+
+    IW->>IA: persistScheduledPayment(paymentId, requestJson)
+    IA->>PDB: INSERT payment (status = SCHEDULED)
+    IA-->>IW: paymentId
+
+    IW->>IA: buildContext(paymentId, requestJson, ...)
+    IA-->>IW: PaymentExecContext
+
+    IW->>IA: determineExecTime(paymentId, requestJson)
+    IA-->>IW: scheduledExecTime
+
+    IW->>CA: saveContextAndEnqueue(context, execTime, workflowId)
+    CA->>OC: INSERT context JSON CLOB
+    CA->>OQ: INSERT queue row (status = READY)
+    CA-->>IW: done
+
+    Note over IW: Workflow completes immediately (no sleep)
+    end
+
+    rect rgb(255, 245, 235)
+    Note over DW,T: Dispatcher — Batch Claim & Dispatch
+
+    Note over DW: Temporal Schedule fires every 5s
+    DW->>DA: claimBatch(config)
+    DA->>OQ: SELECT ... FOR UPDATE SKIP LOCKED
+    DA->>OQ: UPDATE → CLAIMED
+    DA->>OQ: JOIN with PAYMENT_EXEC_CONTEXT (pre-load contextJson)
+    OQ-->>DA: ClaimedBatch (items + contextJson each)
+    DA-->>DW: batch
+
+    DW->>DA: dispatchBatch(batch, config)
+    loop For each item in batch
+        DA->>T: WorkflowClient.start(paymentId, contextJson, startDelay=jitter)
+        DA->>OQ: UPDATE status → DISPATCHED
+    end
+    DA-->>DW: results
+    end
+
+    rect rgb(235, 255, 235)
+    Note over T,EA: Phase B — Payment Execution (after startDelay)
+
+    T->>EW: execute(paymentId, contextJson)
+    EW->>EW: Deserialize contextJson → PaymentExecContext
+
+    EW->>EA: executePayment(context)
+    EA->>PDB: UPDATE status → ACCEPTED
+    EA->>EA: Debit / Credit / Settlement
+    EA-->>EW: success
+
+    EW->>EA: postProcess(context)
+    EA->>EA: Ledger / Reconciliation / Reporting
+    EA-->>EW: success
+
+    EW->>EA: sendNotifications(context)
+    EA->>EA: Email / SMS / Webhooks
+    EA->>PDB: UPDATE status → PROCESSING
+    EA-->>EW: success
+
+    EW->>CA: completeAndCleanup(paymentId)
+    CA->>OQ: UPDATE queue → COMPLETED
+    CA->>OC: DELETE context CLOB
+    CA-->>EW: done
+
+    alt Failure at any step
+        EW->>CA: markFailed(paymentId, error)
+        CA->>OQ: FAILED or DEAD_LETTER
+        EW->>EW: re-throw exception
+    end
+    end
+```
+
+---
+
 ## Dispatch Cycle — Sequence Diagram
+
+The dispatcher workflow runs as a short-lived Temporal workflow triggered by a schedule every 5 seconds. Each cycle is a self-contained unit of work: read config, self-heal stale claims, claim a batch, dispatch, and record results. If any step fails, the entire cycle fails gracefully and the next scheduled cycle picks up the work.
 
 ```mermaid
 sequenceDiagram
@@ -106,23 +222,24 @@ sequenceDiagram
     end
     DA-->>DW: recoveredCount
 
-    Note over DW,DA: Step 3 — Claim Batch
+    Note over DW,DA: Step 3 — Claim Batch (with pre-loaded context)
     DW->>DA: claimBatch(config)
     DA->>OQ: SELECT ... FOR UPDATE SKIP LOCKED (up to 500 rows)
     DA->>OQ: UPDATE locked rows → CLAIMED (dispatch_batch_id)
-    OQ-->>DA: ClaimedBatch (N items)
+    DA->>OQ: JOIN with PAYMENT_EXEC_CONTEXT (pre-load contextJson)
+    OQ-->>DA: ClaimedBatch (N items + contextJson each)
     DA-->>DW: batch
 
     alt batch.items.isEmpty()
         DW-->>S: return (nothing to dispatch)
     end
 
-    Note over DW,DA: Step 4 — Dispatch Batch
+    Note over DW,DA: Step 4 — Dispatch Batch (context passed as param)
     DW->>DA: dispatchBatch(batch, config)
     loop For each item in batch
         DA->>DA: jitterDelay = random(0, 4000ms)
         DA->>DA: workflowId = "exec-payment-{paymentId}"
-        DA->>T: WorkflowClient.start(workflowId, startDelay=jitterDelay)
+        DA->>T: WorkflowClient.start(workflowId, paymentId, contextJson, startDelay=jitterDelay)
         alt Started successfully
             DA->>OQ: UPDATE status → DISPATCHED
         else WorkflowExecutionAlreadyStarted
@@ -141,9 +258,11 @@ sequenceDiagram
     DW-->>S: done (workflow completes)
 
     Note over T,EW: After startDelay elapses...
-    T->>EW: execute(paymentId)
-    EW->>OQ: Load context from CLOB
-    EW->>EW: executePayment → postProcess → sendNotifications
+    T->>EW: execute(paymentId, contextJson)
+    EW->>EW: Deserialize contextJson (no Oracle call)
+    EW->>EW: executePayment (SCHEDULED → ACCEPTED)
+    EW->>EW: postProcess
+    EW->>EW: sendNotifications (ACCEPTED → PROCESSING)
     alt Success
         EW->>OQ: DISPATCHED → COMPLETED, delete context
     else Failure
@@ -153,70 +272,48 @@ sequenceDiagram
 
 ---
 
-## Payment Execution — Sequence Diagram
+## Payment Status — State Diagram
+
+The payment has its own business-level status lifecycle, tracked in the payments database. This is separate from the dispatch queue status and represents the payment's progress through the business process.
 
 ```mermaid
-sequenceDiagram
-    participant T as Temporal Server
-    participant EW as PaymentExecWorkflow
-    participant CA as ContextActivities
-    participant EA as ExecActivities
-    participant OQ as Oracle Queue
-    participant OC as Oracle Context
+stateDiagram-v2
+    [*] --> SCHEDULED : Phase A persists payment\n(after validate, enrich, apply rules)
 
-    Note over T,EW: Exec workflow starts after startDelay jitter
+    SCHEDULED --> ACCEPTED : Phase B validates in\npost-schedule flow\n(executePayment)
 
-    T->>EW: execute(paymentId)
+    ACCEPTED --> PROCESSING : All parties notified\n(sendNotifications)
 
-    Note over EW,CA: Step 1 — Load Context
-    EW->>CA: loadContext(paymentId)
-    CA->>OC: SELECT context_json FROM PAYMENT_EXEC_CONTEXT
-    OC-->>CA: JSON CLOB
-    CA->>CA: Deserialize → PaymentExecContext
-    CA-->>EW: context (validation, enrichment, rules, fees, FX)
+    PROCESSING --> [*]
 
-    Note over EW,EA: Step 2 — Execute Payment
-    EW->>EA: executePayment(context)
-    EA->>EA: Debit source account
-    EA->>EA: Credit destination account
-    EA->>EA: Settlement processing
-    EA-->>EW: success
+    note right of SCHEDULED
+        Payment is persisted in the
+        payments DB. Waiting for its
+        scheduled execution time.
+        Context saved as CLOB.
+        Enqueued in dispatch queue.
+    end note
 
-    Note over EW,EA: Step 3 — Post-Process
-    EW->>EA: postProcess(context)
-    EA->>EA: Ledger entries
-    EA->>EA: Reconciliation records
-    EA->>EA: Regulatory reporting
-    EA-->>EW: success
+    note right of ACCEPTED
+        Post-schedule validation passed.
+        Payment execution (debit/credit/
+        settlement) completed.
+        Confirmed ready for processing.
+    end note
 
-    Note over EW,EA: Step 4 — Notifications
-    EW->>EA: sendNotifications(context)
-    EA->>EA: Email / SMS / Webhooks
-    EA-->>EW: success
-
-    Note over EW,CA: Step 5 — Completion
-    EW->>CA: completeAndCleanup(paymentId)
-    CA->>OQ: UPDATE status → COMPLETED
-    CA->>OC: DELETE context CLOB
-    CA-->>EW: done
-
-    alt Failure at any step
-        EW->>CA: markFailed(paymentId, error)
-        CA->>OQ: Read retry_count
-        alt retry_count + 1 < maxRetries
-            CA->>OQ: UPDATE status → FAILED (retry_count++)
-            Note over CA: Will be retried
-        else retry_count + 1 >= maxRetries
-            CA->>OQ: UPDATE status → DEAD_LETTER
-            Note over CA: Manual investigation required
-        end
-        EW->>EW: re-throw exception
-    end
+    note right of PROCESSING
+        All parties (payer, payee,
+        integration partners) have
+        been notified. Terminal
+        business state.
+    end note
 ```
 
 ---
 
 ## Queue Status — State Diagram
+
+The dispatch queue has its own infrastructure-level status lifecycle for managing the dispatch process. This is an internal mechanism and is separate from the payment's business status above.
 
 ```mermaid
 stateDiagram-v2
@@ -262,7 +359,46 @@ stateDiagram-v2
 
 ---
 
+## Combined Status Flow — Payment & Queue
+
+This diagram shows how the payment status and queue status flow together across both phases, from initial request through to completed processing.
+
+```mermaid
+graph LR
+    subgraph "Phase A (Init Workflow)"
+        A1["Validate"] --> A2["Enrich"]
+        A2 --> A3["Apply Rules"]
+        A3 --> A4["Persist Payment\n(SCHEDULED)"]
+        A4 --> A5["Save Context\n+ Enqueue (READY)"]
+    end
+
+    subgraph "Dispatch Queue"
+        A5 --> Q1["READY"]
+        Q1 --> Q2["CLAIMED\n(context pre-loaded)"]
+        Q2 --> Q3["DISPATCHED\n(contextJson passed)"]
+    end
+
+    subgraph "Phase B (Exec Workflow)"
+        Q3 --> B1["Execute Payment\n(SCHEDULED → ACCEPTED)"]
+        B1 --> B2["Post-Process"]
+        B2 --> B3["Send Notifications\n(ACCEPTED → PROCESSING)"]
+        B3 --> Q4["COMPLETED"]
+    end
+
+    style A4 fill:#89b4fa,stroke:#1e66f5
+    style B1 fill:#a6e3a1,stroke:#40a02b
+    style B3 fill:#a6e3a1,stroke:#40a02b
+    style Q1 fill:#f9e2af,stroke:#e6a817
+    style Q2 fill:#f9e2af,stroke:#e6a817
+    style Q3 fill:#f9e2af,stroke:#e6a817
+    style Q4 fill:#f9e2af,stroke:#e6a817
+```
+
+---
+
 ## Phase A — Payment Initialization State Diagram
+
+Phase A runs as a short-lived Temporal workflow. It validates, enriches, applies rules, persists the payment as `SCHEDULED`, builds the accumulated context, saves it to Oracle, and enqueues the payment for dispatch. The workflow completes immediately — no sleeping.
 
 ```mermaid
 stateDiagram-v2
@@ -274,11 +410,11 @@ stateDiagram-v2
     Enriching --> ApplyingRules : Enrichment complete
     Enriching --> Failed_Init : Enrichment error
 
-    ApplyingRules --> CalculatingFees : Rules applied
+    ApplyingRules --> PersistingPayment : Rules applied
     ApplyingRules --> Failed_Init : Rule rejection
 
-    CalculatingFees --> BuildingContext : Fees calculated
-    CalculatingFees --> Failed_Init : Fee calculation error
+    PersistingPayment --> BuildingContext : Payment persisted (SCHEDULED)
+    PersistingPayment --> Failed_Init : Persist error
 
     BuildingContext --> SavingContext : Context assembled
     SavingContext --> Enqueueing : Context saved to CLOB
@@ -288,6 +424,12 @@ stateDiagram-v2
     Enqueueing --> OrphanedContext : Enqueue failed\n(context exists, harmless)
 
     Completed_A --> [*] : Workflow completes immediately
+
+    note right of PersistingPayment
+        Payment is persisted in the
+        payments DB with SCHEDULED status.
+        First durable business state.
+    end note
 
     note right of SavingContext
         Order matters:
@@ -309,7 +451,7 @@ stateDiagram-v2
 
 ## Deduplication Protection Layers
 
-The system implements four layers of duplicate dispatch prevention:
+The system implements four layers of duplicate dispatch prevention to ensure every payment is executed exactly once, even under concurrent dispatchers, network failures, and Temporal retries.
 
 ```mermaid
 graph TB
@@ -485,7 +627,8 @@ payment-dispatch/
         └── payment/                          # ── Payment-Specific Implementation ──
             ├── model/
             │   ├── PaymentRequest.kt             # Inbound DTO
-            │   └── PaymentExecContext.kt          # Phase A accumulated context
+            │   ├── PaymentExecContext.kt          # Phase A accumulated context
+            │   └── PaymentStatus.kt              # SCHEDULED / ACCEPTED / PROCESSING
             │
             ├── context/
             │   ├── PaymentContextActivities.kt   # @ActivityInterface (bridge)
@@ -493,13 +636,13 @@ payment-dispatch/
             │
             ├── init/                             # Phase A
             │   ├── PaymentInitWorkflow.kt        # @WorkflowInterface
-            │   ├── PaymentInitWorkflowImpl.kt    # Validate → Enrich → Rules → Fees → Enqueue
+            │   ├── PaymentInitWorkflowImpl.kt    # Validate → Enrich → Rules → Persist → Enqueue
             │   ├── PaymentInitActivities.kt      # @ActivityInterface
             │   └── PaymentInitActivitiesImpl.kt  # Business logic stubs
             │
             └── exec/                             # Phase B
                 ├── PaymentExecWorkflow.kt        # @WorkflowInterface
-                ├── PaymentExecWorkflowImpl.kt    # Load context → Execute → Complete/Fail
+                ├── PaymentExecWorkflowImpl.kt    # Deserialize context → Execute → Complete/Fail
                 ├── PaymentExecActivities.kt      # @ActivityInterface
                 └── PaymentExecActivitiesImpl.kt  # Business logic stubs
 ```
@@ -527,7 +670,7 @@ graph LR
 - **No sleeping workflows** — payments wait in Oracle `READY` status, not in Temporal
 - **Controlled throughput** — dispatcher starts ~500 workflows per 5-second cycle
 - **Jitter** — `startDelay(random(0, 4000ms))` spreads execution starts, preventing thundering herd
-- **~200× reduction** in Temporal DB pressure
+- **~200x reduction** in Temporal DB pressure
 
 ### Oracle `FOR UPDATE SKIP LOCKED`
 
@@ -565,6 +708,31 @@ try {
 - **Lower overhead** — avoids MERGE on every save
 - **Idempotent** — safe on Temporal activity retries
 - **Common path optimized** — first insert is a simple INSERT (majority case)
+
+### Context Pre-loading at Dispatch Time
+
+Instead of having each execution workflow load its context from Oracle as its first activity, context is **pre-loaded during the batch claim** and passed as a JSON string parameter to the exec workflow:
+
+```mermaid
+graph LR
+    subgraph "Before — Load in Exec Workflow"
+        C1["Dispatcher starts\nexec workflow"] --> C2["Exec workflow calls\nloadContext activity"] --> C3["Activity queries\nOracle CLOB"] --> C4["Deserialize\n+ Execute"]
+    end
+
+    subgraph "After — Pre-load at Dispatch"
+        D1["Dispatcher claims batch\n(JOIN with context table)"] --> D2["Context JSON\nalready in memory"] --> D3["Pass as workflow\nparameter"] --> D4["Deserialize locally\n+ Execute"]
+    end
+
+    style C2 fill:#f38ba8,stroke:#d20f39
+    style C3 fill:#f38ba8,stroke:#d20f39
+    style D1 fill:#a6e3a1,stroke:#40a02b
+    style D3 fill:#a6e3a1,stroke:#40a02b
+```
+
+- **Eliminates N Oracle round-trips** — context for all 500 items in a batch is loaded in a single JOIN query during `claimBatch`
+- **Simpler exec workflow** — no `loadContext` activity, no Oracle dependency at execution time
+- **One fewer failure mode** — if context load failed before, the exec workflow would be stuck in CLAIMED; now the context is guaranteed available at workflow start
+- **Context is immutable** — Phase A output doesn't change after enqueueing, so pre-loading introduces no staleness risk
 
 ### Composition Over Inheritance
 
@@ -619,7 +787,8 @@ flowchart TD
     R3 -->|No| R3A["Mark FAILED\n(retry next cycle)"]
     R3 -->|Yes| R3B["Mark DEAD_LETTER\n(terminal — alert fires)"]
 
-    F4["Context load fails\n(exec workflow)"] -->|"Status stays CLAIMED"| R1
+    F4["Context pre-load fails\n(during claimBatch)"] -->|"Batch claim fails entirely\nnext cycle retries"| R2B["Items remain CLAIMED\n→ stale recovery"]
+    R2B --> R1
 
     style R1A fill:#a6e3a1,stroke:#40a02b
     style R2 fill:#a6e3a1,stroke:#40a02b
@@ -708,7 +877,7 @@ UPDATE EXEC_RATE_CONFIG SET jitter_window_ms = 8000 WHERE item_type = 'PAYMENT';
 | Sleeping workflows | 500,000 | 0 |
 | Concurrent workflows | 500,000 | ~500 per cycle |
 | Temporal DB rows (active) | ~2,000,000 | ~10,000 |
-| DB pressure factor | 1× | ~0.005× (200× reduction) |
+| DB pressure factor | 1x | ~0.005x (200x reduction) |
 | Dispatch latency | All at once (thundering herd) | Staggered over jitter window |
 
 ---

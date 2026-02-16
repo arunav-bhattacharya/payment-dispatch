@@ -71,17 +71,10 @@ class PaymentContextActivitiesImpl : PaymentContextActivities {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // Phase B: Load context
-    // ═══════════════════════════════════════════════════════════════════
-
-    override fun loadContext(paymentId: String): PaymentExecContext {
-        val context = contextService.load(paymentId, PaymentExecContext::class.java)
-        log.debugf("Loaded context for payment %s (version=%d)", paymentId, context.version)
-        return context
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
     // Phase B: Complete + Cleanup
+    // Note: loadContext was removed — context is now pre-loaded at dispatch
+    // time (joined in DispatchQueueRepository.claimBatch) and passed
+    // directly to the exec workflow as a JSON string parameter.
     // ═══════════════════════════════════════════════════════════════════
 
     override fun completeAndCleanup(paymentId: String) {

@@ -4,13 +4,16 @@ import io.temporal.workflow.WorkflowInterface
 import io.temporal.workflow.WorkflowMethod
 
 /**
- * Phase B workflow: loads context from Oracle, executes the payment,
+ * Phase B workflow: executes the payment using pre-loaded context,
  * and performs post-processing and notifications.
  *
  * Started by the DispatcherWorkflow with a deterministic workflow ID
  * (exec-payment-{paymentId}) and a startDelay for jitter.
  *
- * Short-lived: loads context, executes, completes.
+ * Context is pre-loaded at dispatch time (in DispatcherActivitiesImpl)
+ * and passed as a JSON string parameter — no Oracle round-trip needed.
+ *
+ * Short-lived: deserialize context, execute, complete.
  */
 @WorkflowInterface
 interface PaymentExecWorkflow {
@@ -18,8 +21,10 @@ interface PaymentExecWorkflow {
     /**
      * Execute a payment using the previously accumulated context.
      *
-     * @param paymentId The payment ID — used to load context from Oracle
+     * @param paymentId   The payment ID
+     * @param contextJson Pre-loaded execution context as JSON string
+     *                    (serialized PaymentExecContext from PAYMENT_EXEC_CONTEXT CLOB)
      */
     @WorkflowMethod
-    fun execute(paymentId: String)
+    fun execute(paymentId: String, contextJson: String)
 }

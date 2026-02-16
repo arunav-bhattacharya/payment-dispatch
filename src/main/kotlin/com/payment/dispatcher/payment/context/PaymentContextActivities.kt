@@ -9,7 +9,10 @@ import io.temporal.activity.ActivityMethod
  * Composes the generic framework services (ExposedContextService, DispatchQueueRepository)
  * with payment-specific types.
  *
- * Used by both PaymentInitWorkflow (save + enqueue) and PaymentExecWorkflow (load, complete, fail).
+ * Used by PaymentInitWorkflow (save + enqueue) and PaymentExecWorkflow (complete, fail).
+ *
+ * Note: Context loading is no longer an activity — context is pre-loaded at dispatch time
+ * and passed directly to the exec workflow as a parameter, eliminating an Oracle round-trip.
  */
 @ActivityInterface
 interface PaymentContextActivities {
@@ -28,17 +31,6 @@ interface PaymentContextActivities {
      */
     @ActivityMethod
     fun saveContextAndEnqueue(context: PaymentExecContext, scheduledExecTime: String, initWorkflowId: String?)
-
-    /**
-     * Loads context from Oracle CLOB for execution.
-     * Called as the first activity of PaymentExecWorkflow (Phase B).
-     *
-     * @param paymentId The payment ID to load context for
-     * @return Deserialized PaymentExecContext
-     * @throws IllegalStateException if context not found
-     */
-    @ActivityMethod
-    fun loadContext(paymentId: String): PaymentExecContext
 
     /**
      * Atomically marks COMPLETED + deletes context CLOB.

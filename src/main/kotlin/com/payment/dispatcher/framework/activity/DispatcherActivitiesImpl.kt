@@ -2,6 +2,7 @@ package com.payment.dispatcher.framework.activity
 
 import com.payment.dispatcher.framework.metrics.DispatchMetrics
 import com.payment.dispatcher.framework.model.ClaimedBatch
+import com.payment.dispatcher.framework.model.ClaimedItem
 import com.payment.dispatcher.framework.model.DispatchConfig
 import com.payment.dispatcher.framework.model.DispatchResult
 import com.payment.dispatcher.framework.repository.DispatchAuditRepository
@@ -161,25 +162,27 @@ class DispatcherActivitiesImpl : DispatcherActivities {
         val jitterMaxMs = config.jitterWindowMs.toLong()
 
         return batch.items.map { item ->
-            dispatchSingleItem(item.itemId, item.itemType, item.execWorkflowType,
-                item.execTaskQueue, batch.batchId, jitterMaxMs)
+            dispatchSingleItem(item, batch.batchId, jitterMaxMs)
         }
     }
 
     /**
      * Dispatches a single item by starting its exec workflow with startDelay jitter.
+     * The pre-loaded contextJson is passed as a second argument to the exec workflow,
+     * eliminating the need for the exec workflow to load context from Oracle.
+     *
      * On success: marks DISPATCHED in Oracle.
      * On WorkflowExecutionAlreadyStarted: treats as success (idempotent).
      * On failure: resets to READY for retry in next cycle.
      */
     private fun dispatchSingleItem(
-        itemId: String,
-        itemType: String,
-        execWorkflowType: String,
-        execTaskQueue: String,
+        item: ClaimedItem,
         batchId: String,
         jitterMaxMs: Long
     ): DispatchResult {
+        val itemId = item.itemId
+        val itemType = item.itemType
+
         return try {
             // Calculate random jitter within window
             val jitterDelay = if (jitterMaxMs > 0) {
@@ -193,14 +196,15 @@ class DispatcherActivitiesImpl : DispatcherActivities {
 
             val options = WorkflowOptions.newBuilder()
                 .setWorkflowId(workflowId)
-                .setTaskQueue(execTaskQueue)
+                .setTaskQueue(item.execTaskQueue)
                 .setWorkflowExecutionTimeout(Duration.ofMinutes(10))
                 .setStartDelay(jitterDelay) // KEY: startDelay instead of Workflow.sleep
                 .build()
 
             // Untyped stub for genericity — works with any workflow type
-            val stub = workflowClient.newUntypedWorkflowStub(execWorkflowType, options)
-            WorkflowClient.start(stub::start, itemId)
+            // Passes both itemId and pre-loaded contextJson as arguments
+            val stub = workflowClient.newUntypedWorkflowStub(item.execWorkflowType, options)
+            WorkflowClient.start(stub::start, itemId, item.contextJson)
 
             // Mark CLAIMED → DISPATCHED in Oracle
             queueRepo.markDispatched(itemId, workflowId)
