@@ -5,14 +5,14 @@ import io.temporal.activity.ActivityInterface
 import io.temporal.activity.ActivityMethod
 
 /**
- * Payment-specific context activities.
- * Composes the generic framework services (ExposedContextService, DispatchQueueRepository)
- * with payment-specific types.
+ * Payment-specific context activities — Phase A only.
  *
- * Used by PaymentInitWorkflow (save + enqueue) and PaymentExecWorkflow (complete, fail).
+ * Handles saving the accumulated execution context and enqueueing for dispatch.
+ * Called at the end of PaymentInitWorkflow after all Phase A work is done.
  *
- * Note: Context loading is no longer an activity — context is pre-loaded at dispatch time
- * and passed directly to the exec workflow as a parameter, eliminating an Oracle round-trip.
+ * Dispatch lifecycle concerns (complete, fail, cleanup) are handled by
+ * [DispatchableWorkflow] + [DispatcherActivities] at the framework level,
+ * keeping this interface focused on the business domain.
  */
 @ActivityInterface
 interface PaymentContextActivities {
@@ -25,25 +25,10 @@ interface PaymentContextActivities {
      * If enqueue fails, orphaned context is harmless (TTL cleanup).
      * If context save fails, nothing is enqueued — safe failure mode.
      *
-     * @param context        Accumulated context from Phase A
+     * @param context         Accumulated context from Phase A
      * @param scheduledExecTime ISO-8601 timestamp for scheduled execution
      * @param initWorkflowId  The init workflow ID for tracing
      */
     @ActivityMethod
     fun saveContextAndEnqueue(context: PaymentExecContext, scheduledExecTime: String, initWorkflowId: String?)
-
-    /**
-     * Atomically marks COMPLETED + deletes context CLOB.
-     * Called on successful execution completion.
-     */
-    @ActivityMethod
-    fun completeAndCleanup(paymentId: String)
-
-    /**
-     * Marks the item as FAILED in the dispatch queue.
-     * Increments retry_count. If retries exhausted, transitions to DEAD_LETTER.
-     * Called by PaymentExecWorkflow on execution failure.
-     */
-    @ActivityMethod
-    fun markFailed(paymentId: String, error: String?)
 }

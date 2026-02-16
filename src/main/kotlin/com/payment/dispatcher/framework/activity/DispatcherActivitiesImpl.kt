@@ -8,6 +8,7 @@ import com.payment.dispatcher.framework.model.DispatchResult
 import com.payment.dispatcher.framework.repository.DispatchAuditRepository
 import com.payment.dispatcher.framework.repository.DispatchConfigRepository
 import com.payment.dispatcher.framework.repository.DispatchQueueRepository
+import com.payment.dispatcher.framework.repository.tables.ExecContextTable
 import io.quarkiverse.temporal.TemporalActivity
 import io.temporal.client.WorkflowClient
 import io.temporal.client.WorkflowExecutionAlreadyStarted
@@ -15,6 +16,9 @@ import io.temporal.client.WorkflowNotFoundException
 import io.temporal.client.WorkflowOptions
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.deleteWhere
+import org.jetbrains.exposed.sql.transactions.transaction
 import org.jboss.logging.Logger
 import java.time.Duration
 import java.time.Instant
@@ -29,7 +33,7 @@ import java.util.concurrent.ThreadLocalRandom
  * Reusable across all item types — parameterized by DispatchConfig.
  */
 @ApplicationScoped
-@TemporalActivity(workers = ["dispatch-worker"])
+@TemporalActivity(workers = ["dispatch-worker", "payment-exec-worker"])
 class DispatcherActivitiesImpl : DispatcherActivities {
 
     @Inject
@@ -267,5 +271,36 @@ class DispatcherActivitiesImpl : DispatcherActivities {
 
         log.infof("Batch %s complete: %d dispatched, %d failed (itemType=%s)",
             batchId, successCount, failCount, config.itemType)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Execution Lifecycle — Called by DispatchableWorkflow base class
+    // These keep dispatch queue concerns out of domain-specific workflows.
+    // ═══════════════════════════════════════════════════════════════════
+
+    override fun completeItem(itemId: String) {
+        // Mark DISPATCHED → COMPLETED in queue
+        queueRepo.markCompleted(itemId)
+
+        // Delete the CLOB context (no longer needed)
+        transaction {
+            ExecContextTable.deleteWhere { paymentId eq itemId }
+        }
+
+        log.infof("Item %s: completed and context cleaned up", itemId)
+    }
+
+    override fun failItem(itemId: String, itemType: String, error: String?) {
+        val config = configRepo.findByItemType(itemType)
+        val maxRetries = config?.maxDispatchRetries ?: 5
+
+        val isDeadLetter = queueRepo.markFailed(itemId, error, maxRetries)
+
+        if (isDeadLetter) {
+            metrics.recordDeadLetter()
+            log.errorf("Item %s moved to DEAD_LETTER: %s", itemId, error?.take(200))
+        } else {
+            log.warnf("Item %s marked as FAILED (will retry): %s", itemId, error?.take(200))
+        }
     }
 }

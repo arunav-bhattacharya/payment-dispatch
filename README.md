@@ -19,15 +19,34 @@ This reduces Temporal DB pressure by **~200x** (from 500K sleeping workflows to 
 
 ## Architecture
 
-The system is structured as two distinct phases connected by an Oracle-based dispatch queue. This decouples the payment preparation from payment execution, allowing hundreds of thousands of payments to be prepared ahead of time without consuming Temporal resources.
+**Phase A (Payment Initialization)**
 
-**Phase A (Payment Initialization)** handles all upfront work — validation, enrichment, rules application — and persists the payment in the payments database with `SCHEDULED` status. It then serializes all accumulated results as a JSON CLOB context and enqueues the payment in the dispatch queue with `READY` status. The init workflow completes immediately after enqueueing — there are no sleeping workflows.
+- Validates, enriches, and applies rules to the payment
+- Persists the payment in the payments DB with `SCHEDULED` status
+- Serializes all accumulated results as a JSON CLOB context
+- Enqueues the payment in the dispatch queue with `READY` status
+- Workflow completes immediately — no sleeping workflows
 
-**The Oracle Dispatch Queue** acts as a buffer between the two phases. Payments sit in `READY` status until their scheduled execution time arrives. The queue supports concurrent dispatchers via `FOR UPDATE SKIP LOCKED`, provides built-in retry tracking with dead-letter protection, and stores the accumulated Phase A context as a JSON CLOB so Phase B doesn't repeat any work.
+**Oracle Dispatch Queue**
 
-**Phase B (Dispatch & Execution)** is driven by a Temporal Schedule that fires a `DispatcherWorkflow` every 5 seconds. Each cycle reads runtime config (with a kill switch), recovers any stale claims from crashed dispatchers, claims a batch of ready payments using Oracle row-level locking (joining with the context table to **pre-load the JSON CLOB** in the same query), and starts execution workflows with randomized `startDelay()` jitter to prevent thundering herd. The pre-loaded context JSON is passed directly as a workflow parameter — **eliminating a separate Oracle round-trip per execution**. The execution workflow deserializes the context, executes the payment (transitioning it from `SCHEDULED` → `ACCEPTED`), post-processes, sends notifications (transitioning to `PROCESSING`), and marks the dispatch queue entry as `COMPLETED`.
+- Buffer between phases — payments sit in `READY` until their scheduled execution time
+- Concurrent dispatchers via `FOR UPDATE SKIP LOCKED`
+- Built-in retry tracking with dead-letter protection
+- Stores Phase A context as JSON CLOB (no work repeated in Phase B)
 
-**Observability** is provided through an insert-only audit log in Oracle (every dispatch, failure, and stale recovery is recorded) and Prometheus metrics exported via Micrometer (batch claimed counts, workflow start successes/failures, stale recovery counts, dead-letter counts, and cycle duration timers).
+**Phase B (Dispatch & Execution)**
+
+- Temporal Schedule fires `DispatcherWorkflow` every 5 seconds
+- Each cycle: read config (kill switch) → recover stale claims → claim batch → dispatch → record results
+- Batch claim JOINs with context table to **pre-load JSON CLOB** — no separate Oracle round-trip per execution
+- Exec workflows started with `startDelay()` jitter to prevent thundering herd
+- Exec workflows extend `DispatchableWorkflow` — dispatch lifecycle (complete/fail/cleanup) handled by the framework, business logic is isolated in `doExecute()`
+- Payment transitions: `SCHEDULED` → `ACCEPTED` → `PROCESSING`
+
+**Observability**
+
+- Insert-only audit log in Oracle (dispatches, failures, stale recoveries)
+- Prometheus metrics via Micrometer (batch claimed, workflow starts, failures, stale recoveries, dead letters, cycle duration)
 
 ```mermaid
 graph TB
@@ -56,11 +75,11 @@ graph TB
         CLAIM --> ORACLE_Q
         CLAIM --> ORACLE_CTX
         CLAIM --> DISPATCH["Dispatch Batch\n(pass contextJson)"]
-        DISPATCH -->|"startDelay(jitter)\n+ contextJson param"| EXEC_WF["PaymentExecWorkflow"]
-        EXEC_WF --> EXECUTE["Execute Payment\n(SCHEDULED → ACCEPTED)"]
-        EXECUTE --> POST["Post-Process"]
-        POST --> NOTIFY["Send Notifications\n(ACCEPTED → PROCESSING)"]
-        NOTIFY --> CLEANUP["Mark COMPLETED\n+ Delete Context"]
+        DISPATCH -->|"startDelay(jitter)\n+ contextJson param"| EXEC_WF["PaymentExecWorkflow\n(extends DispatchableWorkflow)"]
+        EXEC_WF --> EXECUTE["doExecute:\nExecute → PostProcess → Notify"]
+        EXECUTE --> LIFECYCLE["DispatchableWorkflow:\ncompleteItem / failItem"]
+        LIFECYCLE --> ORACLE_Q
+        LIFECYCLE --> ORACLE_CTX
     end
 
     subgraph "Observability"
@@ -79,103 +98,57 @@ graph TB
 
 ## Payment Lifecycle — End-to-End Sequence Diagram
 
-This diagram shows the complete payment lifecycle spanning both phases and the dispatcher. Phase A prepares and enqueues the payment, the dispatcher claims batches and starts execution workflows with pre-loaded context, and Phase B executes the payment using the context passed as a parameter.
-
 ```mermaid
 sequenceDiagram
     participant Client as REST API / Kafka
     participant IW as PaymentInitWorkflow
     participant IA as InitActivities
     participant CA as ContextActivities
-    participant OQ as Oracle Queue
-    participant OC as Oracle Context
+    participant Oracle as Oracle (Queue + Context)
     participant PDB as Payments DB
-    participant DW as DispatcherWorkflow
-    participant DA as DispatcherActivities
     participant T as Temporal Server
-    participant EW as PaymentExecWorkflow
+    participant EW as PaymentExecWorkflow<br/>(extends DispatchableWorkflow)
     participant EA as ExecActivities
+    participant DA as DispatcherActivities
 
     rect rgb(235, 245, 255)
     Note over Client,CA: Phase A — Payment Initialization
 
     Client->>IW: initializePayment(paymentId, requestJson)
-
-    IW->>IA: validatePayment(paymentId, requestJson)
-    IA-->>IW: validationResult
-
-    IW->>IA: enrichPayment(paymentId, requestJson)
-    IA-->>IW: enrichmentData
-
-    IW->>IA: applyRules(paymentId, requestJson)
-    IA-->>IW: appliedRules
-
-    IW->>IA: persistScheduledPayment(paymentId, requestJson)
+    IW->>IA: validate → enrich → applyRules
+    IW->>IA: persistScheduledPayment
     IA->>PDB: INSERT payment (status = SCHEDULED)
-    IA-->>IW: paymentId
-
-    IW->>IA: buildContext(paymentId, requestJson, ...)
-    IA-->>IW: PaymentExecContext
-
-    IW->>IA: determineExecTime(paymentId, requestJson)
-    IA-->>IW: scheduledExecTime
-
-    IW->>CA: saveContextAndEnqueue(context, execTime, workflowId)
-    CA->>OC: INSERT context JSON CLOB
-    CA->>OQ: INSERT queue row (status = READY)
-    CA-->>IW: done
-
-    Note over IW: Workflow completes immediately (no sleep)
+    IW->>IA: buildContext + determineExecTime
+    IW->>CA: saveContextAndEnqueue(context, execTime)
+    CA->>Oracle: INSERT context CLOB + INSERT queue (READY)
+    Note over IW: Workflow completes immediately
     end
 
     rect rgb(255, 245, 235)
-    Note over DW,T: Dispatcher — Batch Claim & Dispatch
-
-    Note over DW: Temporal Schedule fires every 5s
-    DW->>DA: claimBatch(config)
-    DA->>OQ: SELECT ... FOR UPDATE SKIP LOCKED
-    DA->>OQ: UPDATE → CLAIMED
-    DA->>OQ: JOIN with PAYMENT_EXEC_CONTEXT (pre-load contextJson)
-    OQ-->>DA: ClaimedBatch (items + contextJson each)
-    DA-->>DW: batch
-
-    DW->>DA: dispatchBatch(batch, config)
-    loop For each item in batch
-        DA->>T: WorkflowClient.start(paymentId, contextJson, startDelay=jitter)
-        DA->>OQ: UPDATE status → DISPATCHED
-    end
-    DA-->>DW: results
+    Note over T: Dispatcher (every 5s) — claims batch + pre-loads context
+    T->>Oracle: claimBatch (FOR UPDATE SKIP LOCKED + JOIN context)
+    Oracle-->>T: ClaimedBatch (items + contextJson)
+    T->>T: dispatchBatch: WorkflowClient.start(id, contextJson, startDelay=jitter)
+    T->>Oracle: UPDATE status → DISPATCHED
     end
 
     rect rgb(235, 255, 235)
-    Note over T,EA: Phase B — Payment Execution (after startDelay)
+    Note over T,DA: Phase B — Payment Execution (after startDelay)
 
     T->>EW: execute(paymentId, contextJson)
-    EW->>EW: Deserialize contextJson → PaymentExecContext
+    Note over EW: DispatchableWorkflow.executeWithLifecycle()
 
-    EW->>EA: executePayment(context)
-    EA->>PDB: UPDATE status → ACCEPTED
-    EA->>EA: Debit / Credit / Settlement
-    EA-->>EW: success
+    EW->>EW: doExecute: deserialize contextJson
+    EW->>EA: executePayment (SCHEDULED → ACCEPTED)
+    EW->>EA: postProcess
+    EW->>EA: sendNotifications (ACCEPTED → PROCESSING)
 
-    EW->>EA: postProcess(context)
-    EA->>EA: Ledger / Reconciliation / Reporting
-    EA-->>EW: success
-
-    EW->>EA: sendNotifications(context)
-    EA->>EA: Email / SMS / Webhooks
-    EA->>PDB: UPDATE status → PROCESSING
-    EA-->>EW: success
-
-    EW->>CA: completeAndCleanup(paymentId)
-    CA->>OQ: UPDATE queue → COMPLETED
-    CA->>OC: DELETE context CLOB
-    CA-->>EW: done
-
-    alt Failure at any step
-        EW->>CA: markFailed(paymentId, error)
-        CA->>OQ: FAILED or DEAD_LETTER
-        EW->>EW: re-throw exception
+    alt Success
+        EW->>DA: completeItem(paymentId)
+        DA->>Oracle: DISPATCHED → COMPLETED + DELETE context
+    else Failure
+        EW->>DA: failItem(paymentId, error)
+        DA->>Oracle: DISPATCHED → FAILED / DEAD_LETTER
     end
     end
 ```
@@ -257,16 +230,15 @@ sequenceDiagram
 
     DW-->>S: done (workflow completes)
 
-    Note over T,EW: After startDelay elapses...
+    Note over T,EW: After startDelay — DispatchableWorkflow handles lifecycle
     T->>EW: execute(paymentId, contextJson)
-    EW->>EW: Deserialize contextJson (no Oracle call)
-    EW->>EW: executePayment (SCHEDULED → ACCEPTED)
-    EW->>EW: postProcess
-    EW->>EW: sendNotifications (ACCEPTED → PROCESSING)
+    EW->>EW: doExecute (business logic only)
     alt Success
-        EW->>OQ: DISPATCHED → COMPLETED, delete context
+        EW->>DA: completeItem(paymentId)
+        DA->>OQ: DISPATCHED → COMPLETED + delete context
     else Failure
-        EW->>OQ: DISPATCHED → FAILED (or DEAD_LETTER)
+        EW->>DA: failItem(paymentId, itemType, error)
+        DA->>OQ: DISPATCHED → FAILED / DEAD_LETTER
     end
 ```
 
@@ -608,10 +580,11 @@ payment-dispatch/
         │   │   └── ExposedContextService.kt      # Exposed + Jackson implementation
         │   │
         │   ├── activity/
-        │   │   ├── DispatcherActivities.kt       # @ActivityInterface (5 methods)
-        │   │   └── DispatcherActivitiesImpl.kt   # Core dispatch logic
+        │   │   ├── DispatcherActivities.kt       # @ActivityInterface (7 methods)
+        │   │   └── DispatcherActivitiesImpl.kt   # Core dispatch + lifecycle logic
         │   │
         │   ├── workflow/
+        │   │   ├── DispatchableWorkflow.kt       # Abstract base (Template Method)
         │   │   ├── DispatcherWorkflow.kt         # @WorkflowInterface
         │   │   └── DispatcherWorkflowImpl.kt     # 5-step dispatch cycle
         │   │
@@ -631,7 +604,7 @@ payment-dispatch/
             │   └── PaymentStatus.kt              # SCHEDULED / ACCEPTED / PROCESSING
             │
             ├── context/
-            │   ├── PaymentContextActivities.kt   # @ActivityInterface (bridge)
+            │   ├── PaymentContextActivities.kt   # @ActivityInterface (Phase A only)
             │   └── PaymentContextActivitiesImpl.kt # Composes generic services
             │
             ├── init/                             # Phase A
@@ -642,7 +615,7 @@ payment-dispatch/
             │
             └── exec/                             # Phase B
                 ├── PaymentExecWorkflow.kt        # @WorkflowInterface
-                ├── PaymentExecWorkflowImpl.kt    # Deserialize context → Execute → Complete/Fail
+                ├── PaymentExecWorkflowImpl.kt    # extends DispatchableWorkflow (business logic only)
                 ├── PaymentExecActivities.kt      # @ActivityInterface
                 └── PaymentExecActivitiesImpl.kt  # Business logic stubs
 ```
@@ -734,42 +707,44 @@ graph LR
 - **One fewer failure mode** — if context load failed before, the exec workflow would be stuck in CLAIMED; now the context is guaranteed available at workflow start
 - **Context is immutable** — Phase A output doesn't change after enqueueing, so pre-loading introduces no staleness risk
 
-### Composition Over Inheritance
+### Composition + Template Method
 
-The framework layer is generic and reusable. Payment-specific implementations compose generic services:
+The framework layer is generic and reusable. Payment-specific implementations compose generic services and extend the `DispatchableWorkflow` base:
 
 ```mermaid
 graph TB
     subgraph "Framework (Generic)"
+        DW["DispatchableWorkflow\n(abstract base)"]
+        DA["DispatcherActivities\n(completeItem / failItem)"]
         ECS["ExposedContextService&lt;T&gt;"]
         DQR["DispatchQueueRepository"]
-        DCR["DispatchConfigRepository"]
-        DM["DispatchMetrics"]
     end
 
     subgraph "Payment Domain (Specific)"
-        PCA["PaymentContextActivitiesImpl"]
+        PEW["PaymentExecWorkflowImpl\n(doExecute: business logic only)"]
+        PCA["PaymentContextActivitiesImpl\n(Phase A only)"]
     end
 
+    PEW -->|"extends"| DW
+    DW -->|"calls"| DA
+    DA -->|"uses"| DQR
     PCA -->|"composes"| ECS
     PCA -->|"composes"| DQR
-    PCA -->|"composes"| DCR
-    PCA -->|"composes"| DM
 
-    ECS -.->|"T = PaymentExecContext"| PCA
-
+    style DW fill:#89b4fa,stroke:#1e66f5
+    style DA fill:#89b4fa,stroke:#1e66f5
     style ECS fill:#89b4fa,stroke:#1e66f5
     style DQR fill:#89b4fa,stroke:#1e66f5
-    style DCR fill:#89b4fa,stroke:#1e66f5
-    style DM fill:#89b4fa,stroke:#1e66f5
+    style PEW fill:#a6e3a1,stroke:#40a02b
     style PCA fill:#a6e3a1,stroke:#40a02b
 ```
 
 To add a new domain (e.g., invoices):
 1. Insert config row in `EXEC_RATE_CONFIG` (`item_type='INVOICE'`)
-2. Create `InvoiceExecContext`, `InvoiceInitWorkflow`, `InvoiceExecWorkflow`
-3. Create `InvoiceContextActivitiesImpl` composing the same generic services
-4. No changes to the framework layer
+2. Create `InvoiceExecContext`, `InvoiceInitWorkflow`
+3. Create `InvoiceExecWorkflowImpl extends DispatchableWorkflow` — implement `doExecute()` only
+4. Create `InvoiceContextActivitiesImpl` composing the same generic services
+5. No changes to the framework layer — lifecycle handled by `DispatchableWorkflow`
 
 ---
 
@@ -805,9 +780,9 @@ Three dedicated workers with isolated task queues:
 
 | Worker | Task Queue | Workflows | Activities | Concurrency |
 |--------|-----------|-----------|------------|-------------|
-| **dispatch-worker** | `dispatch-task-queue` | DispatcherWorkflow | DispatcherActivities | 5 WF / 10 Act |
-| **payment-init-worker** | `payment-init-task-queue` | PaymentInitWorkflow | PaymentInitActivities | 100 WF / 200 Act |
-| **payment-exec-worker** | `payment-exec-task-queue` | PaymentExecWorkflow | PaymentExecActivities, PaymentContextActivities | 100 WF / 200 Act |
+| **dispatch-worker** | `dispatch-task-queue` | DispatcherWorkflow | DispatcherActivities (dispatch + lifecycle) | 5 WF / 10 Act |
+| **payment-init-worker** | `payment-init-task-queue` | PaymentInitWorkflow | PaymentInitActivities, PaymentContextActivities | 100 WF / 200 Act |
+| **payment-exec-worker** | `payment-exec-task-queue` | PaymentExecWorkflow | PaymentExecActivities, DispatcherActivities | 100 WF / 200 Act |
 
 ---
 

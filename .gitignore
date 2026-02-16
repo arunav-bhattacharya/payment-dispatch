@@ -49,3 +49,7 @@ application-local.properties
 *.tmp
 *.bak
 *.orig
+
+# Binaries
+*.bin
+*.lock

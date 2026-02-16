@@ -8,9 +8,16 @@ import com.payment.dispatcher.framework.repository.tables.ExecRateConfigTable
 import io.agroal.api.AgroalDataSource
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
-import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.plus
+import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.update
 import org.jboss.logging.Logger
 import java.sql.Timestamp
 import java.time.Instant
@@ -61,7 +68,6 @@ class DispatchQueueRepository {
 
     // ═══════════════════════════════════════════════════════════════════
     // Batch Claim — Called by dispatcher activities
-    // Fixed from review P0 #2: two-step SELECT + UPDATE (not nested)
     // ═══════════════════════════════════════════════════════════════════
 
     /**
@@ -71,6 +77,7 @@ class DispatchQueueRepository {
      * 1. SELECT FOR UPDATE SKIP LOCKED — lock candidate rows (raw SQL for Oracle)
      * 2. UPDATE locked rows — set status to CLAIMED (raw SQL, same connection)
      * 3. Fetch full details via Exposed DSL — return claimed items with config info
+     *    and pre-loaded context JSON (joined with PAYMENT_EXEC_CONTEXT)
      *
      * Steps 1-2 use raw JDBC because Exposed DSL only has PostgreSQL ForUpdateOption.
      * Step 3 uses Exposed DSL since no locking is needed.
@@ -91,9 +98,7 @@ class DispatchQueueRepository {
             return emptyList()
         }
 
-        // Step 3: Fetch full details via Exposed DSL (no locking needed)
-        // Joins with PAYMENT_EXEC_CONTEXT to pre-load context JSON alongside queue items.
-        // This eliminates a separate Oracle round-trip in the exec workflow.
+        // Step 3: Fetch full details + pre-load context JSON via Exposed DSL
         return transaction {
             val configRow = ExecRateConfigTable.selectAll()
                 .where { ExecRateConfigTable.itemType eq itemType }
@@ -212,7 +217,6 @@ class DispatchQueueRepository {
 
     /**
      * Transitions CLAIMED → DISPATCHED after exec workflow is started.
-     * Called by the dispatcher's dispatchBatch activity.
      */
     fun markDispatched(itemId: String, execWorkflowId: String) {
         transaction {
@@ -234,7 +238,6 @@ class DispatchQueueRepository {
 
     /**
      * Transitions DISPATCHED → COMPLETED on successful execution.
-     * Called by the exec workflow's completeAndCleanup activity.
      */
     fun markCompleted(itemId: String) {
         transaction {
@@ -251,16 +254,11 @@ class DispatchQueueRepository {
 
     /**
      * Marks an item as FAILED or DEAD_LETTER based on retry count.
-     * If retry_count + 1 >= maxRetries, transitions to DEAD_LETTER (terminal).
-     * Otherwise, transitions to FAILED (retryable).
-     *
-     * Called by the exec workflow's markFailed activity.
      *
      * @return true if the item was moved to DEAD_LETTER
      */
     fun markFailed(itemId: String, error: String?, maxRetries: Int): Boolean {
         return transaction {
-            // Read current retry count
             val currentRow = ExecQueueTable.selectAll()
                 .where { ExecQueueTable.paymentId eq itemId }
                 .firstOrNull() ?: return@transaction false
@@ -293,8 +291,7 @@ class DispatchQueueRepository {
     }
 
     /**
-     * Resets a CLAIMED item back to READY for retry in next dispatch cycle.
-     * Called when WorkflowClient.start() fails for a specific item.
+     * Resets a CLAIMED or FAILED item back to READY for retry in next dispatch cycle.
      */
     fun resetToReady(itemId: String, error: String?) {
         transaction {
@@ -322,10 +319,8 @@ class DispatchQueueRepository {
 
     /**
      * Finds CLAIMED items older than the threshold that may be stuck.
-     * The caller should check Temporal for each to confirm the exec workflow
+     * The caller checks Temporal for each to confirm the exec workflow
      * is NOT running before resetting to READY.
-     *
-     * @return List of (itemId, execWorkflowId) pairs for stale claims
      */
     fun findStaleClaims(
         itemType: String,
@@ -335,8 +330,7 @@ class DispatchQueueRepository {
         val staleThreshold = Instant.now().minusSeconds(thresholdMins.toLong() * 60)
 
         return transaction {
-            ExecQueueTable
-                .select(ExecQueueTable.paymentId, ExecQueueTable.execWorkflowId)
+            ExecQueueTable.selectAll()
                 .where {
                     (ExecQueueTable.itemType eq itemType) and
                             (ExecQueueTable.queueStatus eq QueueStatus.CLAIMED.name) and
@@ -370,37 +364,6 @@ class DispatchQueueRepository {
                 it[lastError] = "Stale claim recovery"
                 it[updatedAt] = Instant.now()
             }
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // Query Helpers
-    // ═══════════════════════════════════════════════════════════════════
-
-    /**
-     * Gets the current status of an item. Used for diagnostics and guards.
-     */
-    fun getStatus(itemId: String): QueueStatus? {
-        return transaction {
-            ExecQueueTable
-                .select(ExecQueueTable.queueStatus)
-                .where { ExecQueueTable.paymentId eq itemId }
-                .firstOrNull()
-                ?.let { QueueStatus.valueOf(it[ExecQueueTable.queueStatus]) }
-        }
-    }
-
-    /**
-     * Counts items by status for a given item type. Used for metrics/monitoring.
-     */
-    fun countByStatus(itemType: String, status: QueueStatus): Long {
-        return transaction {
-            ExecQueueTable.selectAll()
-                .where {
-                    (ExecQueueTable.itemType eq itemType) and
-                            (ExecQueueTable.queueStatus eq status.name)
-                }
-                .count()
         }
     }
 }
