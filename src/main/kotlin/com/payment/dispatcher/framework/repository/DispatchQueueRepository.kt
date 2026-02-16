@@ -4,7 +4,9 @@ import com.payment.dispatcher.framework.model.ClaimedItem
 import com.payment.dispatcher.framework.model.QueueStatus
 import com.payment.dispatcher.framework.repository.tables.ExecQueueTable
 import com.payment.dispatcher.framework.repository.tables.ExecRateConfigTable
+import io.agroal.api.AgroalDataSource
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.inject.Inject
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
@@ -12,17 +14,21 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.plus
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.vendors.ForUpdateOption
 import org.jboss.logging.Logger
+import java.sql.Timestamp
 import java.time.Instant
 
 /**
  * Core dispatch queue operations using Kotlin Exposed DSL.
- * All concurrency-critical operations (claimBatch, stale recovery) use
- * FOR UPDATE SKIP LOCKED for contention-free claiming.
+ * The claimBatch method uses raw JDBC for Oracle-native FOR UPDATE SKIP LOCKED,
+ * since Exposed DSL only provides PostgreSQL-specific ForUpdateOption.
+ * All other operations use Exposed DSL.
  */
 @ApplicationScoped
 class DispatchQueueRepository {
+
+    @Inject
+    lateinit var dataSource: AgroalDataSource
 
     companion object {
         private val log = Logger.getLogger(DispatchQueueRepository::class.java)
@@ -64,10 +70,13 @@ class DispatchQueueRepository {
     /**
      * Claims a batch of READY items atomically using FOR UPDATE SKIP LOCKED.
      *
-     * Three-step process within a single transaction:
-     * 1. SELECT FOR UPDATE SKIP LOCKED — lock candidate rows without contention
-     * 2. UPDATE locked rows — set status to CLAIMED
-     * 3. Fetch full details — return claimed items with config info
+     * Three-step process within a single JDBC transaction:
+     * 1. SELECT FOR UPDATE SKIP LOCKED — lock candidate rows (raw SQL for Oracle)
+     * 2. UPDATE locked rows — set status to CLAIMED (raw SQL, same connection)
+     * 3. Fetch full details via Exposed DSL — return claimed items with config info
+     *
+     * Steps 1-2 use raw JDBC because Exposed DSL only has PostgreSQL ForUpdateOption.
+     * Step 3 uses Exposed DSL since no locking is needed.
      *
      * @return List of claimed items ready for dispatch (may be empty)
      */
@@ -78,35 +87,15 @@ class DispatchQueueRepository {
         maxRetries: Int,
         batchId: String
     ): List<ClaimedItem> {
+        // Steps 1-2: Raw JDBC for Oracle FOR UPDATE SKIP LOCKED
+        val claimedIds = claimBatchRaw(itemType, batchSize, cutoffTime, maxRetries, batchId)
+
+        if (claimedIds.isEmpty()) {
+            return emptyList()
+        }
+
+        // Step 3: Fetch full details via Exposed DSL (no locking needed)
         return transaction {
-            // Step 1: Lock candidate rows with SKIP LOCKED
-            val candidateIds = ExecQueueTable
-                .select(ExecQueueTable.paymentId)
-                .where {
-                    (ExecQueueTable.itemType eq itemType) and
-                    (ExecQueueTable.queueStatus eq QueueStatus.READY.name) and
-                    (ExecQueueTable.scheduledExecTime lessEq cutoffTime) and
-                    (ExecQueueTable.retryCount less maxRetries)
-                }
-                .orderBy(ExecQueueTable.scheduledExecTime to SortOrder.ASC)
-                .limit(batchSize)
-                .forUpdate(ForUpdateOption.PostgreSQL.ForUpdate(mode = ForUpdateOption.PostgreSQL.MODE.SKIP_LOCKED))
-                .map { it[ExecQueueTable.paymentId] }
-
-            if (candidateIds.isEmpty()) {
-                return@transaction emptyList()
-            }
-
-            // Step 2: Update the locked rows to CLAIMED
-            val now = Instant.now()
-            ExecQueueTable.update({ ExecQueueTable.paymentId inList candidateIds }) {
-                it[queueStatus] = QueueStatus.CLAIMED.name
-                it[claimedAt] = now
-                it[dispatchBatchId] = batchId
-                it[updatedAt] = now
-            }
-
-            // Step 3: Fetch full details joined with config for workflow type/queue
             val configRow = ExecRateConfigTable.selectAll()
                 .where { ExecRateConfigTable.itemType eq itemType }
                 .firstOrNull()
@@ -129,6 +118,91 @@ class DispatchQueueRepository {
                     )
                 }
         }
+    }
+
+    /**
+     * Raw JDBC implementation of SELECT FOR UPDATE SKIP LOCKED + UPDATE.
+     * Oracle supports FOR UPDATE SKIP LOCKED natively.
+     * Uses a single JDBC connection/transaction to ensure the locks are held
+     * while the UPDATE executes.
+     *
+     * @return List of payment IDs that were successfully claimed
+     */
+    private fun claimBatchRaw(
+        itemType: String,
+        batchSize: Int,
+        cutoffTime: Instant,
+        maxRetries: Int,
+        batchId: String
+    ): List<String> {
+        val candidateIds = mutableListOf<String>()
+
+        dataSource.connection.use { conn ->
+            conn.autoCommit = false
+            try {
+                // Step 1: SELECT FOR UPDATE SKIP LOCKED (Oracle-native syntax)
+                val selectSql = """
+                    SELECT payment_id FROM PAYMENT_EXEC_QUEUE
+                    WHERE item_type = ?
+                      AND queue_status = ?
+                      AND scheduled_exec_time <= ?
+                      AND retry_count < ?
+                    ORDER BY scheduled_exec_time ASC
+                    FETCH FIRST ? ROWS ONLY
+                    FOR UPDATE SKIP LOCKED
+                """.trimIndent()
+
+                conn.prepareStatement(selectSql).use { ps ->
+                    ps.setString(1, itemType)
+                    ps.setString(2, QueueStatus.READY.name)
+                    ps.setTimestamp(3, Timestamp.from(cutoffTime))
+                    ps.setInt(4, maxRetries)
+                    ps.setInt(5, batchSize)
+
+                    ps.executeQuery().use { rs ->
+                        while (rs.next()) {
+                            candidateIds.add(rs.getString("payment_id"))
+                        }
+                    }
+                }
+
+                if (candidateIds.isEmpty()) {
+                    conn.commit()
+                    return emptyList()
+                }
+
+                // Step 2: UPDATE locked rows to CLAIMED
+                val placeholders = candidateIds.joinToString(",") { "?" }
+                val updateSql = """
+                    UPDATE PAYMENT_EXEC_QUEUE
+                    SET queue_status = ?,
+                        claimed_at = ?,
+                        dispatch_batch_id = ?,
+                        updated_at = ?
+                    WHERE payment_id IN ($placeholders)
+                """.trimIndent()
+
+                val now = Timestamp.from(Instant.now())
+                conn.prepareStatement(updateSql).use { ps ->
+                    ps.setString(1, QueueStatus.CLAIMED.name)
+                    ps.setTimestamp(2, now)
+                    ps.setString(3, batchId)
+                    ps.setTimestamp(4, now)
+                    candidateIds.forEachIndexed { index, id ->
+                        ps.setString(5 + index, id)
+                    }
+                    ps.executeUpdate()
+                }
+
+                conn.commit()
+                log.debugf("Claimed %d items for batchId=%s (itemType=%s)", candidateIds.size, batchId, itemType)
+            } catch (e: Exception) {
+                conn.rollback()
+                throw e
+            }
+        }
+
+        return candidateIds
     }
 
     // ═══════════════════════════════════════════════════════════════════

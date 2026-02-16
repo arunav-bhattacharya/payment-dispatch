@@ -2,11 +2,13 @@ package com.payment.dispatcher.framework.context
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.payment.dispatcher.framework.repository.tables.ExecContextTable
+import org.jetbrains.exposed.exceptions.ExposedSQLException
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.deleteWhere
+import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
-import org.jetbrains.exposed.sql.upsert
+import org.jetbrains.exposed.sql.update
 import org.jboss.logging.Logger
 import java.time.Instant
 
@@ -17,7 +19,8 @@ import java.time.Instant
  * Not @ApplicationScoped directly — domain-specific subclasses provide the concrete type.
  * Example: PaymentContextService extends ExposedContextService<PaymentExecContext>.
  *
- * Uses Exposed's upsert() for idempotent saves (handles activity retries gracefully).
+ * Uses insert-first strategy: attempts INSERT, falls back to UPDATE on duplicate key.
+ * This avoids Oracle MERGE overhead from Exposed's upsert().
  */
 open class ExposedContextService<T>(
     private val objectMapper: ObjectMapper
@@ -25,24 +28,42 @@ open class ExposedContextService<T>(
 
     companion object {
         private val log = Logger.getLogger(ExposedContextService::class.java)
+        // Oracle unique constraint violation: ORA-00001
+        private const val ORACLE_UNIQUE_VIOLATION = 1
     }
 
     /**
-     * Saves context as JSON CLOB using MERGE (upsert) for idempotency.
-     * Safe on Temporal activity retries — won't fail on duplicate insert.
+     * Saves context as JSON CLOB using insert-first strategy.
+     * Attempts INSERT; on duplicate key (ORA-00001), falls back to UPDATE.
+     * Safe on Temporal activity retries — duplicate inserts are handled gracefully.
      */
     override fun save(itemId: String, itemType: String, context: T) {
         val json = objectMapper.writeValueAsString(context)
         val now = Instant.now()
 
         transaction {
-            ExecContextTable.upsert(ExecContextTable.paymentId) {
-                it[paymentId] = itemId
-                it[ExecContextTable.itemType] = itemType
-                it[contextJson] = json
-                it[contextVersion] = 1
-                it[createdAt] = now
-                it[updatedAt] = now
+            try {
+                ExecContextTable.insert {
+                    it[paymentId] = itemId
+                    it[ExecContextTable.itemType] = itemType
+                    it[contextJson] = json
+                    it[contextVersion] = 1
+                    it[createdAt] = now
+                    it[updatedAt] = now
+                }
+            } catch (e: ExposedSQLException) {
+                val isUniqueViolation = e.sqlState == "23000" ||
+                    (e.cause as? java.sql.SQLException)?.errorCode == ORACLE_UNIQUE_VIOLATION
+                if (isUniqueViolation) {
+                    log.debugf("Context already exists for itemId=%s — updating", itemId)
+                    ExecContextTable.update({ ExecContextTable.paymentId eq itemId }) {
+                        it[contextJson] = json
+                        it[contextVersion] = 1
+                        it[updatedAt] = now
+                    }
+                } else {
+                    throw e
+                }
             }
         }
 
