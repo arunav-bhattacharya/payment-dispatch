@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus.security:quarkus-security:2.2.1" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus.security" artifactId="quarkus-security" version="2.2.1" baseVersion="2.2.1" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus.security/quarkus-security/2.2.1/2879402ad326511ed8a65a6378731b4e45d12e4/quarkus-security-2.2.1.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus:quarkus-core:3.29.4" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus" artifactId="quarkus-core" version="3.29.4" baseVersion="3.29.4" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-core/3.29.4/fa26dc7d7f602ecb6a3c83924bbf093133479cb7/quarkus-core-3.29.4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-core/3.29.4/1f3dcc031a5f022c6c5905b8c2d6b9e9e210cbac/quarkus-core-3.29.4-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

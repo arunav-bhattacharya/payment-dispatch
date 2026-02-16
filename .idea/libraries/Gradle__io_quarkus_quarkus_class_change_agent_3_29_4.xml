@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus:quarkus-class-change-agent:3.29.4" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus" artifactId="quarkus-class-change-agent" version="3.29.4" baseVersion="3.29.4" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-class-change-agent/3.29.4/d0e9b36179956ed0071d913c3f7047bf2a2e5a63/quarkus-class-change-agent-3.29.4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-class-change-agent/3.29.4/b790b158ce66458db0b4ea9a3b22c85cb7d6d68/quarkus-class-change-agent-3.29.4-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

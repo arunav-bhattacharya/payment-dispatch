@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: org.apache.maven.resolver:maven-resolver-api:1.9.24" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="org.apache.maven.resolver" artifactId="maven-resolver-api" version="1.9.24" baseVersion="1.9.24" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven.resolver/maven-resolver-api/1.9.24/45e695114b35034e1b589dca4d5c74c825968a9b/maven-resolver-api-1.9.24.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven.resolver/maven-resolver-api/1.9.24/d7f552ffdc236fc955b12cd2d58115f255872a85/maven-resolver-api-1.9.24-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

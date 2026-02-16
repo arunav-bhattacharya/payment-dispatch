@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="Gradle: io.agroal:agroal-narayana:2.8" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.agroal" artifactId="agroal-narayana" version="2.8" baseVersion="2.8" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.agroal/agroal-narayana/2.8/c89aa19b6436fec7d1b6d8545d3629b2800a3470/agroal-narayana-2.8.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

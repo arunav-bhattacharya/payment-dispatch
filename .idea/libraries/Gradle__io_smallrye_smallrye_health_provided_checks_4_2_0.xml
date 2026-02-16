@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="Gradle: io.smallrye:smallrye-health-provided-checks:4.2.0" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.smallrye" artifactId="smallrye-health-provided-checks" version="4.2.0" baseVersion="4.2.0" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye/smallrye-health-provided-checks/4.2.0/36739149090d1a2f96c0ab124869fde25b7e5a9/smallrye-health-provided-checks-4.2.0.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

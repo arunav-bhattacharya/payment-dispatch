@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus:quarkus-classloader-commons:3.29.4" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus" artifactId="quarkus-classloader-commons" version="3.29.4" baseVersion="3.29.4" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-classloader-commons/3.29.4/ebbd6b35601005306781343f7839e53319f66ebd/quarkus-classloader-commons-3.29.4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-classloader-commons/3.29.4/ff32fbda0189089028264798de9ea23bf5a31047/quarkus-classloader-commons-3.29.4-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.smallrye.common:smallrye-common-process:2.14.0" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.smallrye.common" artifactId="smallrye-common-process" version="2.14.0" baseVersion="2.14.0" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye.common/smallrye-common-process/2.14.0/d9fcf609a78492d5d38fa88072426195eb7b3177/smallrye-common-process-2.14.0.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye.common/smallrye-common-process/2.14.0/694e762bfbeebc40290dd4786c1e088abda48207/smallrye-common-process-2.14.0-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

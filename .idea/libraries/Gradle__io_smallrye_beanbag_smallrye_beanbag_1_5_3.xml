@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.smallrye.beanbag:smallrye-beanbag:1.5.3" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.smallrye.beanbag" artifactId="smallrye-beanbag" version="1.5.3" baseVersion="1.5.3" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye.beanbag/smallrye-beanbag/1.5.3/e879a4cd6eaeb8ca82241740bdf104d343834b26/smallrye-beanbag-1.5.3.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye.beanbag/smallrye-beanbag/1.5.3/8cce5f17b27a0221aa038a4819a0327b7c227d2c/smallrye-beanbag-1.5.3-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

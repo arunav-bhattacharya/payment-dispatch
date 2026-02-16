@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="Gradle: org.jboss.narayana.jts:narayana-jts-integration:7.3.3.Final" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="org.jboss.narayana.jts" artifactId="narayana-jts-integration" version="7.3.3.Final" baseVersion="7.3.3.Final" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.jboss.narayana.jts/narayana-jts-integration/7.3.3.Final/eeb902438907920d3527b39a39d7ce3ca86d7d23/narayana-jts-integration-7.3.3.Final.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

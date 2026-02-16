@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus:quarkus-ide-launcher:3.29.4" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus" artifactId="quarkus-ide-launcher" version="3.29.4" baseVersion="3.29.4" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-ide-launcher/3.29.4/793d9f5ea9b564f362f3135f4746671ba333cc64/quarkus-ide-launcher-3.29.4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-ide-launcher/3.29.4/89ad7d6dc96fdd4f7f0b8f6b64ffc80daf08866c/quarkus-ide-launcher-3.29.4-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

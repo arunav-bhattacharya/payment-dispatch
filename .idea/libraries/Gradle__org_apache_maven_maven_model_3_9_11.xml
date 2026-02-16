@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: org.apache.maven:maven-model:3.9.11" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="org.apache.maven" artifactId="maven-model" version="3.9.11" baseVersion="3.9.11" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven/maven-model/3.9.11/67ea52736eaf94e26be0635e6084d7dd04d5700/maven-model-3.9.11.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven/maven-model/3.9.11/3c01eee5c553fe6ab91ccd89ac33b993049c7f96/maven-model-3.9.11-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

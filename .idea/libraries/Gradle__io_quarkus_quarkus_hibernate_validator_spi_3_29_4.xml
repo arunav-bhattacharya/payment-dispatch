@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus:quarkus-hibernate-validator-spi:3.29.4" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus" artifactId="quarkus-hibernate-validator-spi" version="3.29.4" baseVersion="3.29.4" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-hibernate-validator-spi/3.29.4/62ecbf2d1a600aa58a76598d908cc8c447a2f5d8/quarkus-hibernate-validator-spi-3.29.4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-hibernate-validator-spi/3.29.4/b8dc1216720b5f440a15e7064bc0519e572d2eb/quarkus-hibernate-validator-spi-3.29.4-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

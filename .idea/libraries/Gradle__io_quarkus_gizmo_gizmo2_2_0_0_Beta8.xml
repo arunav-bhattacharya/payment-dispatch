@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus.gizmo:gizmo2:2.0.0.Beta8" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus.gizmo" artifactId="gizmo2" version="2.0.0.Beta8" baseVersion="2.0.0.Beta8" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus.gizmo/gizmo2/2.0.0.Beta8/88237254b4f9e7c65703f3591ef374ce048c683c/gizmo2-2.0.0.Beta8.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus.gizmo/gizmo2/2.0.0.Beta8/8b47d9d0cf605773268a0a338d43cacf2fe8a0b/gizmo2-2.0.0.Beta8-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: org.apache.maven.resolver:maven-resolver-transport-wagon:1.9.24" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="org.apache.maven.resolver" artifactId="maven-resolver-transport-wagon" version="1.9.24" baseVersion="1.9.24" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven.resolver/maven-resolver-transport-wagon/1.9.24/e807372eaff3816a8881bd2fdc51f814fb8c9e1b/maven-resolver-transport-wagon-1.9.24.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven.resolver/maven-resolver-transport-wagon/1.9.24/26220c5754f222297c370195f067007f11778e65/maven-resolver-transport-wagon-1.9.24-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

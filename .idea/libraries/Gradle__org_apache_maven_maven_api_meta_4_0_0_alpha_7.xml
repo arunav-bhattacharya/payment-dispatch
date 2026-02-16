@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: org.apache.maven:maven-api-meta:4.0.0-alpha-7" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="org.apache.maven" artifactId="maven-api-meta" version="4.0.0-alpha-7" baseVersion="4.0.0-alpha-7" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven/maven-api-meta/4.0.0-alpha-7/db4b391f5341ef940fb3a79060865b7edda6c6d5/maven-api-meta-4.0.0-alpha-7.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven/maven-api-meta/4.0.0-alpha-7/5cef78d70f8d80ed94efe9cd7ec09985e940accc/maven-api-meta-4.0.0-alpha-7-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: org.apache.maven.resolver:maven-resolver-named-locks:1.9.24" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="org.apache.maven.resolver" artifactId="maven-resolver-named-locks" version="1.9.24" baseVersion="1.9.24" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven.resolver/maven-resolver-named-locks/1.9.24/724667367b1e56ea2a6b58a6a3f8cb78e8b9b0e9/maven-resolver-named-locks-1.9.24.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven.resolver/maven-resolver-named-locks/1.9.24/ba9f17672f64e6083cfd4f644d716346447d901c/maven-resolver-named-locks-1.9.24-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

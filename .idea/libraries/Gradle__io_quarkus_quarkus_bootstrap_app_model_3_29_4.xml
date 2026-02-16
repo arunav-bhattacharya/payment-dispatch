@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus:quarkus-bootstrap-app-model:3.29.4" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus" artifactId="quarkus-bootstrap-app-model" version="3.29.4" baseVersion="3.29.4" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-bootstrap-app-model/3.29.4/9fafeae06a7bbcd7bbc21bd2b44dabcf8d99df85/quarkus-bootstrap-app-model-3.29.4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-bootstrap-app-model/3.29.4/de0de3a11a718d8a5d312253ba9868b36a6d6af7/quarkus-bootstrap-app-model-3.29.4-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

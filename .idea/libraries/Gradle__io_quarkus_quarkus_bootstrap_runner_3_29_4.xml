@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus:quarkus-bootstrap-runner:3.29.4" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus" artifactId="quarkus-bootstrap-runner" version="3.29.4" baseVersion="3.29.4" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-bootstrap-runner/3.29.4/7de3a9d87637cde3e31046390845d21d0591f5b4/quarkus-bootstrap-runner-3.29.4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-bootstrap-runner/3.29.4/e4bf03815d0ae78746904dec7a3d61257a13c4b/quarkus-bootstrap-runner-3.29.4-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

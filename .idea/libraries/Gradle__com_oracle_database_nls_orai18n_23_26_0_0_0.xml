@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="Gradle: com.oracle.database.nls:orai18n:23.26.0.0.0" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="com.oracle.database.nls" artifactId="orai18n" version="23.26.0.0.0" baseVersion="23.26.0.0.0" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/com.oracle.database.nls/orai18n/23.26.0.0.0/c9f1a01dd3b95b5c56db62532f9c3d1780d84f0/orai18n-23.26.0.0.0.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

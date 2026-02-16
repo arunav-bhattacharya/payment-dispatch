@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.smallrye.beanbag:smallrye-beanbag-sisu:1.5.3" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.smallrye.beanbag" artifactId="smallrye-beanbag-sisu" version="1.5.3" baseVersion="1.5.3" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye.beanbag/smallrye-beanbag-sisu/1.5.3/62a4255474eeb74a6dfd076e89945a6b390f6e83/smallrye-beanbag-sisu-1.5.3.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye.beanbag/smallrye-beanbag-sisu/1.5.3/5284be628263b00112f66605c39d734a4e459708/smallrye-beanbag-sisu-1.5.3-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

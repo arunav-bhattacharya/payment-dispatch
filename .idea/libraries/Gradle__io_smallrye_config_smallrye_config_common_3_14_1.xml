@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.smallrye.config:smallrye-config-common:3.14.1" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.smallrye.config" artifactId="smallrye-config-common" version="3.14.1" baseVersion="3.14.1" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye.config/smallrye-config-common/3.14.1/798e7d35f313ef80e34adecdf08b1debb8e5c7c7/smallrye-config-common-3.14.1.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye.config/smallrye-config-common/3.14.1/97838cad212de90cdf70416d00e17149ec028a65/smallrye-config-common-3.14.1-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

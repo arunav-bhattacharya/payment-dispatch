@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus:quarkus-builder:3.29.4" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus" artifactId="quarkus-builder" version="3.29.4" baseVersion="3.29.4" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-builder/3.29.4/ca3b9e9c43846db3ad1ad652fad0e107dec913d4/quarkus-builder-3.29.4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-builder/3.29.4/8645f4cc85f64ed900b887ef4cacc12efa7c5e44/quarkus-builder-3.29.4-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

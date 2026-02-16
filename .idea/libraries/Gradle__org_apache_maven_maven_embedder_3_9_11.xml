@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: org.apache.maven:maven-embedder:3.9.11" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="org.apache.maven" artifactId="maven-embedder" version="3.9.11" baseVersion="3.9.11" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven/maven-embedder/3.9.11/f2d59decf0b9ec21603c80115880f0896bdc28d5/maven-embedder-3.9.11.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.apache.maven/maven-embedder/3.9.11/8508bea241eb361bb68b6d4c59644e9b4632504/maven-embedder-3.9.11-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

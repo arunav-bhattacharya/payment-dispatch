@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/payment-dispatch.iml" filepath="$PROJECT_DIR$/.idea/modules/payment-dispatch.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/payment-dispatch.integrationTest.iml" filepath="$PROJECT_DIR$/.idea/modules/payment-dispatch.integrationTest.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/payment-dispatch.main.iml" filepath="$PROJECT_DIR$/.idea/modules/payment-dispatch.main.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/payment-dispatch.native-test.iml" filepath="$PROJECT_DIR$/.idea/modules/payment-dispatch.native-test.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/payment-dispatch.quarkus-generated-sources.iml" filepath="$PROJECT_DIR$/.idea/modules/payment-dispatch.quarkus-generated-sources.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/payment-dispatch.quarkus-test-generated-sources.iml" filepath="$PROJECT_DIR$/.idea/modules/payment-dispatch.quarkus-test-generated-sources.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/payment-dispatch.test.iml" filepath="$PROJECT_DIR$/.idea/modules/payment-dispatch.test.iml" />
+    </modules>
+  </component>
+</project>

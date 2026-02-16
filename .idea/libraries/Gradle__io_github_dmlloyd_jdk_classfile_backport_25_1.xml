@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.github.dmlloyd:jdk-classfile-backport:25.1" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.github.dmlloyd" artifactId="jdk-classfile-backport" version="25.1" baseVersion="25.1" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.github.dmlloyd/jdk-classfile-backport/25.1/78f035319ccbc5c1d2c65fe2854290e0f15a8fb1/jdk-classfile-backport-25.1.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.github.dmlloyd/jdk-classfile-backport/25.1/2b99f0d6eedcb0bee2238e1f0e756d807b1dfc/jdk-classfile-backport-25.1-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

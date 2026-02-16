@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: com.google.inject:guice:classes:5.1.0" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="com.google.inject" artifactId="guice" version="5.1.0" baseVersion="5.1.0" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/com.google.inject/guice/5.1.0/e7ba4c25bec3761840f67c73f166c0d509d01d1d/guice-5.1.0-classes.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/com.google.inject/guice/5.1.0/3615134568ad698ea689b2cc5578c8274cad371d/guice-5.1.0-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>

@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="Gradle: io.smallrye:smallrye-health:4.2.0" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.smallrye" artifactId="smallrye-health" version="4.2.0" baseVersion="4.2.0" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye/smallrye-health/4.2.0/db514f0eff1fdd3287974fa0591ddda00442a2d9/smallrye-health-4.2.0.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

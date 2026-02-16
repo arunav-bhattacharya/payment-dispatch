@@ -1,0 +1,80 @@
+# =============================================================================
+# Payment Dispatch System — Application Configuration
+# =============================================================================
+
+# --- Dispatch Settings -------------------------------------------------------
+dispatch:
+  default-item-type: PAYMENT
+  schedule-id: dispatch-payment-schedule
+  auto-create-schedule: true
+  dispatch-interval-secs: 5
+  task-queues:
+    dispatcher: dispatch-task-queue
+    payment-init: payment-init-task-queue
+    payment-exec: payment-exec-task-queue
+
+# --- Temporal ----------------------------------------------------------------
+quarkus:
+  temporal:
+    connection:
+      target: "${TEMPORAL_TARGET:localhost:7233}"
+    namespace: "${TEMPORAL_NAMESPACE:default}"
+    start-workers: true
+
+    worker:
+      # Dispatcher worker: lightweight, runs dispatch cycles every 5 seconds
+      dispatch-worker:
+        task-queue: dispatch-task-queue
+        max-concurrent-activity-execution-size: 10
+        max-concurrent-workflow-task-execution-size: 5
+
+      # Payment init worker: runs Phase A (validation, enrichment, rules, fees)
+      payment-init-worker:
+        task-queue: payment-init-task-queue
+        max-concurrent-activity-execution-size: 200
+        max-concurrent-workflow-task-execution-size: 100
+
+      # Payment exec worker: runs Phase B (actual payment execution)
+      payment-exec-worker:
+        task-queue: payment-exec-task-queue
+        max-concurrent-activity-execution-size: 200
+        max-concurrent-workflow-task-execution-size: 100
+
+  # --- Oracle Datasource (Agroal connection pool) ----------------------------
+  datasource:
+    db-kind: oracle
+    username: "${ORACLE_USER:dispatch_user}"
+    password: "${ORACLE_PASSWORD:dispatch_pass}"
+    jdbc:
+      url: "${ORACLE_JDBC_URL:jdbc:oracle:thin:@//localhost:1521/XEPDB1}"
+      max-size: 20
+      min-size: 5
+      initial-size: 5
+      acquisition-timeout: 10S
+
+  # --- Jackson ---------------------------------------------------------------
+  jackson:
+    serialization-inclusion: non-null
+
+  # --- Micrometer / Prometheus -----------------------------------------------
+  micrometer:
+    export:
+      prometheus:
+        enabled: true
+        path: /q/metrics
+
+  # --- Health Checks ---------------------------------------------------------
+  health:
+    extensions:
+      enabled: true
+
+  # --- Logging ---------------------------------------------------------------
+  log:
+    level: INFO
+    category:
+      "com.payment.dispatcher":
+        level: DEBUG
+      "org.jetbrains.exposed":
+        level: INFO
+      "io.temporal":
+        level: INFO

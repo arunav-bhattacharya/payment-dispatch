@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="Gradle: org.eclipse.parsson:jakarta.json:1.1.7" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="org.eclipse.parsson" artifactId="jakarta.json" version="1.1.7" baseVersion="1.1.7" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.eclipse.parsson/jakarta.json/1.1.7/91a668f91f296fe82c6a25cb0175b733e9e05fe7/jakarta.json-1.1.7.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

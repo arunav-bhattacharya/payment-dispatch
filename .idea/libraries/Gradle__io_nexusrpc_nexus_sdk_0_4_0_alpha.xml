@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="Gradle: io.nexusrpc:nexus-sdk:0.4.0-alpha" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.nexusrpc" artifactId="nexus-sdk" version="0.4.0-alpha" baseVersion="0.4.0-alpha" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.nexusrpc/nexus-sdk/0.4.0-alpha/ec9d0f3ce209bc30368263afadd60da211809532/nexus-sdk-0.4.0-alpha.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

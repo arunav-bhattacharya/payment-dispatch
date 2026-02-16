@@ -1,0 +1,10 @@
+<component name="libraryTable">
+  <library name="Gradle: io.smallrye.reactive:smallrye-reactive-converter-mutiny:3.0.3" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.smallrye.reactive" artifactId="smallrye-reactive-converter-mutiny" version="3.0.3" baseVersion="3.0.3" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.smallrye.reactive/smallrye-reactive-converter-mutiny/3.0.3/b0f37e345418b2d6d5e9f4b468be9d659c7391d7/smallrye-reactive-converter-mutiny-3.0.3.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

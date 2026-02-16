@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="Gradle: io.quarkus:quarkus-bootstrap-maven4-resolver:3.29.4" type="java-imported" external-system-id="GRADLE">
+    <properties groupId="io.quarkus" artifactId="quarkus-bootstrap-maven4-resolver" version="3.29.4" baseVersion="3.29.4" />
+    <CLASSES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-bootstrap-maven4-resolver/3.29.4/d3293fc47c4be2c46f67c23b68c0daa94dd4f346/quarkus-bootstrap-maven4-resolver-3.29.4.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/.gradle/caches/modules-2/files-2.1/io.quarkus/quarkus-bootstrap-maven4-resolver/3.29.4/e5a20650457136b93730c3db4685eb7264a29e05/quarkus-bootstrap-maven4-resolver-3.29.4-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>
