@@ -15,7 +15,6 @@ data class DispatchConfig(
     val preStartBufferMins: Int,
     val maxDispatchRetries: Int,
     val staleClaimThresholdMins: Int,
-    val maxStaleRecoveryPerCycle: Int,
     val execWorkflowType: String,
     val execTaskQueue: String
 )

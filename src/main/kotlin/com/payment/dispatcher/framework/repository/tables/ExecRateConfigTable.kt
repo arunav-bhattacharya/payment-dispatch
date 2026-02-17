@@ -16,7 +16,6 @@ object ExecRateConfigTable : Table("EXEC_RATE_CONFIG") {
     val preStartBufferMins = integer("pre_start_buffer_mins").default(5)
     val maxDispatchRetries = integer("max_dispatch_retries").default(3)
     val staleClaimThresholdMins = integer("stale_claim_threshold_mins").default(10)
-    val maxStaleRecoveryPerCycle = integer("max_stale_recovery_per_cycle").default(50)
     val execWorkflowType = varchar("exec_workflow_type", 256)
     val execTaskQueue = varchar("exec_task_queue", 256)
     val description = varchar("description", 512).nullable()

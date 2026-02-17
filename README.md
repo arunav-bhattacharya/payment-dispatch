@@ -32,14 +32,14 @@ This reduces Temporal DB pressure by **~200x** (from 500K sleeping workflows to 
 - Buffer between phases — payments sit in `READY` until their scheduled execution time
 - Concurrent dispatchers via `FOR UPDATE SKIP LOCKED`
 - Built-in retry tracking for dispatch failures (CLAIMED → READY)
-- Stale recovery for orphaned claims
+- Unified stale recovery — claim query picks up stale CLAIMED items alongside READY items
 - Stores Phase A context as JSON CLOB (no work repeated in Phase B)
 - Queue lifecycle ends at DISPATCHED — Temporal manages execution from that point
 
 **Phase B (Dispatch & Execution)**
 
 - Temporal Schedule fires `DispatcherWorkflow` every 5 seconds
-- Each cycle: read config (kill switch) → recover stale claims → claim batch → dispatch → record results
+- Each cycle: read config (kill switch) → claim batch (includes stale recovery) → dispatch → record results
 - Batch claim JOINs with context table to **pre-load JSON CLOB** — no separate Oracle round-trip per execution
 - Exec workflows started with `startDelay()` jitter to prevent thundering herd
 - Exec workflows are pure business logic with zero dispatch framework awareness — they receive `contextJson` as a parameter, deserialize it, and execute. The dispatcher manages queue status externally
@@ -47,8 +47,8 @@ This reduces Temporal DB pressure by **~200x** (from 500K sleeping workflows to 
 
 **Observability**
 
-- Insert-only audit log in Oracle (dispatches, failures, stale recoveries)
-- Prometheus metrics via Micrometer (batch claimed, workflow starts, failures, stale recoveries, dead letters, cycle duration)
+- Insert-only audit log in Oracle (dispatches, failures)
+- Prometheus metrics via Micrometer (batch claimed, workflow starts, failures, cycle duration)
 
 ```mermaid
 graph TB
@@ -72,8 +72,7 @@ graph TB
     subgraph "Phase B — Dispatch & Execution"
         SCHEDULE["Temporal Schedule\n(every 5s)"] -->|fires| DISP_WF["DispatcherWorkflow"]
         DISP_WF --> READ_CFG["Read Config"]
-        READ_CFG --> STALE["Recover Stale Claims"]
-        STALE --> CLAIM["Claim Batch\n(FOR UPDATE SKIP LOCKED\n+ pre-load context)"]
+        READ_CFG --> CLAIM["Claim Batch\n(FOR UPDATE SKIP LOCKED\n+ stale recovery\n+ pre-load context)"]
         CLAIM --> ORACLE_Q
         CLAIM --> ORACLE_CTX
         CLAIM --> DISPATCH["Dispatch Batch\n(pass contextJson)"]
@@ -150,7 +149,7 @@ sequenceDiagram
 
 ## Dispatch Cycle — Sequence Diagram
 
-The dispatcher workflow runs as a short-lived Temporal workflow triggered by a schedule every 5 seconds. Each cycle is a self-contained unit of work: read config, self-heal stale claims, claim a batch, dispatch, and record results. If any step fails, the entire cycle fails gracefully and the next scheduled cycle picks up the work.
+The dispatcher workflow runs as a short-lived Temporal workflow triggered by a schedule every 5 seconds. Each cycle is a self-contained unit of work: read config, claim a batch (which also picks up stale CLAIMED items), dispatch, and record results. If any step fails, the entire cycle fails gracefully and the next scheduled cycle picks up the work.
 
 ```mermaid
 sequenceDiagram
@@ -174,23 +173,9 @@ sequenceDiagram
         DW-->>S: return (kill switch active)
     end
 
-    Note over DW,DA: Step 2 — Recover Stale Claims
-    DW->>DA: recoverStaleClaims(config)
-    DA->>OQ: SELECT CLAIMED rows older than 2 mins
-    OQ-->>DA: List<StaleClaim>
-    loop For each stale claim
-        DA->>T: describe(execWorkflowId)
-        alt WorkflowNotFoundException
-            DA->>OQ: UPDATE status → READY (retry_count++)
-        else Workflow exists
-            Note over DA: Skip (conservative)
-        end
-    end
-    DA-->>DW: recoveredCount
-
-    Note over DW,DA: Step 3 — Claim Batch (with pre-loaded context)
+    Note over DW,DA: Step 2 — Claim Batch (READY + stale CLAIMED, with pre-loaded context)
     DW->>DA: claimBatch(config)
-    DA->>OQ: SELECT ... FOR UPDATE SKIP LOCKED (up to 500 rows)
+    DA->>OQ: SELECT ... FOR UPDATE SKIP LOCKED (READY OR stale CLAIMED, up to 500 rows)
     DA->>OQ: UPDATE locked rows → CLAIMED (dispatch_batch_id)
     DA->>OQ: JOIN with PAYMENT_EXEC_CONTEXT (pre-load contextJson)
     OQ-->>DA: ClaimedBatch (N items + contextJson each)
@@ -200,7 +185,7 @@ sequenceDiagram
         DW-->>S: return (nothing to dispatch)
     end
 
-    Note over DW,DA: Step 4 — Dispatch Batch (context passed as param)
+    Note over DW,DA: Step 3 — Dispatch Batch (context passed as param)
     DW->>DA: dispatchBatch(batch, config)
     loop For each item in batch
         DA->>DA: jitterDelay = random(0, 4000ms)
@@ -209,7 +194,7 @@ sequenceDiagram
         alt Started successfully
             DA->>OQ: UPDATE status → DISPATCHED
         else WorkflowExecutionAlreadyStarted
-            Note over DA: Treat as success (dedup)
+            Note over DA: Treat as success (dedup — stale item already running)
             DA->>OQ: UPDATE status → DISPATCHED
         else Start failed
             DA->>OQ: UPDATE status → READY (retry_count++)
@@ -217,7 +202,7 @@ sequenceDiagram
     end
     DA-->>DW: List<DispatchResult>
 
-    Note over DW,DA: Step 5 — Record Results
+    Note over DW,DA: Step 4 — Record Results
     DW->>DA: recordResults(batchId, results, config)
     DA->>OQ: INSERT audit log (BATCH_COMPLETE summary)
 
@@ -226,7 +211,7 @@ sequenceDiagram
     Note over T,EW: After startDelay — Pure business logic executes
     T->>EW: execute(paymentId, contextJson)
     EW->>EW: deserialize contextJson + execute business logic
-    Note over EW: Workflow completes (stale recovery handles failures)
+    Note over EW: Workflow completes (Temporal manages lifecycle)
 ```
 
 ---
@@ -282,7 +267,7 @@ stateDiagram-v2
 
     CLAIMED --> DISPATCHED : Exec workflow started\n(WorkflowClient.start)
     CLAIMED --> READY : Dispatch failed\n(retry_count++)
-    CLAIMED --> READY : Stale recovery\n(claimed_at > threshold\n& workflow not found)
+    CLAIMED --> READY : Stale recovery\n(claimed_at > threshold,\nre-claimed in next batch)
 
     DISPATCHED --> [*] : Terminal — Temporal\nowns the workflow now
 
@@ -293,8 +278,9 @@ stateDiagram-v2
 
     note right of CLAIMED
         Locked by a dispatcher instance.
-        Cleared by stale recovery if
-        dispatcher crashes.
+        Re-claimed by unified batch query
+        if claimed_at exceeds threshold
+        (handles dispatcher crashes).
     end note
 
     note right of DISPATCHED
@@ -450,8 +436,7 @@ erDiagram
         NUMBER jitter_window_ms "startDelay variance"
         NUMBER pre_start_buffer_mins "How far ahead to query"
         NUMBER max_dispatch_retries "Max dispatch retries before giving up"
-        NUMBER stale_claim_threshold_mins "Stale claim detection"
-        NUMBER max_stale_recovery_per_cycle "Recovery cap"
+        NUMBER stale_claim_threshold_mins "Stale claim detection threshold"
         VARCHAR2 exec_workflow_type "e.g. PaymentExecWorkflow"
         VARCHAR2 exec_task_queue "e.g. payment-exec-task-queue"
         TIMESTAMP created_at
@@ -485,10 +470,10 @@ erDiagram
 
     DISPATCH_AUDIT_LOG {
         NUMBER audit_id PK "Auto-increment"
-        VARCHAR2 batch_id "BATCH-xxxx or STALE-RECOVERY"
+        VARCHAR2 batch_id "BATCH-xxxx"
         VARCHAR2 item_type "Type discriminator"
         VARCHAR2 payment_id "Item ID"
-        VARCHAR2 action "DISPATCHED/FAILED/STALE_RECOVERY/..."
+        VARCHAR2 action "DISPATCHED/DISPATCH_FAILED/BATCH_COMPLETE/..."
         VARCHAR2 status_before
         VARCHAR2 status_after
         VARCHAR2 detail "Free-form context"
@@ -506,8 +491,8 @@ erDiagram
 
 | Index | Columns | Purpose |
 |-------|---------|---------|
-| `idx_peq_dispatch` | `(item_type, queue_status, scheduled_exec_time, retry_count)` | `claimBatch` — high-frequency dispatcher query |
-| `idx_peq_stale_claims` | `(item_type, queue_status, claimed_at)` | Stale recovery query |
+| `idx_peq_dispatch` | `(item_type, queue_status, scheduled_exec_time, retry_count)` | Unified claim query — READY items predicate |
+| `idx_peq_stale_claims` | `(item_type, queue_status, claimed_at)` | Unified claim query — stale CLAIMED predicate |
 | `idx_peq_batch` | `(dispatch_batch_id)` | Post-claim batch lookup |
 
 ---
@@ -548,7 +533,7 @@ payment-dispatch/
         │   │   │   ├── ExecContextTable.kt       # Exposed table: PAYMENT_EXEC_CONTEXT
         │   │   │   └── DispatchAuditLogTable.kt  # Exposed table: DISPATCH_AUDIT_LOG
         │   │   │
-        │   │   ├── DispatchQueueRepository.kt    # Core queue ops (claim, status, stale recovery)
+        │   │   ├── DispatchQueueRepository.kt    # Core queue ops (unified claim, status transitions)
         │   │   ├── DispatchConfigRepository.kt   # Config reader
         │   │   └── DispatchAuditRepository.kt    # Insert-only audit log
         │   │
@@ -557,14 +542,14 @@ payment-dispatch/
         │   │   └── ExposedContextService.kt      # Exposed + Jackson implementation
         │   │
         │   ├── activity/
-        │   │   ├── DispatcherActivities.kt       # @ActivityInterface (5 methods)
+        │   │   ├── DispatcherActivities.kt       # @ActivityInterface (4 methods)
         │   │   ├── DispatcherActivitiesImpl.kt   # Core dispatch logic
         │   │   └── SchedulableContextActivities.kt # @ActivityInterface for context + enqueue
         │   │
         │   ├── workflow/
         │   │   ├── ScheduleLifecycle.kt           # Composable lifecycle helper
         │   │   ├── DispatcherWorkflow.kt         # @WorkflowInterface
-        │   │   └── DispatcherWorkflowImpl.kt     # 5-step dispatch cycle
+        │   │   └── DispatcherWorkflowImpl.kt     # 4-step dispatch cycle
         │   │
         │   ├── schedule/
         │   │   └── DispatchScheduleSetup.kt      # Temporal Schedule creation
@@ -629,17 +614,21 @@ Raw JDBC is used for the batch claim operation because Kotlin Exposed DSL only p
 ```sql
 SELECT payment_id FROM PAYMENT_EXEC_QUEUE
 WHERE item_type = ?
-  AND queue_status = 'READY'
-  AND scheduled_exec_time <= ?
-  AND retry_count < ?
+  AND (
+    (queue_status = 'READY' AND scheduled_exec_time <= ? AND retry_count < ?)
+    OR
+    (queue_status = 'CLAIMED' AND claimed_at <= ?)
+  )
 ORDER BY scheduled_exec_time ASC
 FETCH FIRST ? ROWS ONLY
 FOR UPDATE SKIP LOCKED
 ```
 
+- **Unified stale recovery** — single query picks up both READY items and stale CLAIMED items
 - **Contention-free** — multiple dispatcher instances can run concurrently
 - **Non-blocking** — `SKIP LOCKED` skips rows locked by other transactions
 - **Atomic** — SELECT + UPDATE within the same JDBC transaction
+- **Self-healing** — stale CLAIMED items are re-dispatched; deterministic workflow ID + `WorkflowExecutionAlreadyStarted` handler ensures correctness
 
 ### Insert-First Context Persistence
 
@@ -730,21 +719,22 @@ To add a new domain (e.g., invoices):
 
 ```mermaid
 flowchart TD
-    F1["Dispatcher crashes\nafter claiming batch"] -->|"Items stuck in CLAIMED"| R1["Stale Recovery\n(next cycle detects\nclaimed_at > 2 min)"]
-    R1 -->|"Check Temporal:\nworkflow not found"| R1A["Reset to READY\n(retry_count++)"]
-    R1 -->|"Check Temporal:\nworkflow exists"| R1B["Skip\n(conservative)"]
+    F1["Dispatcher crashes\nafter claiming batch"] -->|"Items stuck in CLAIMED"| R1["Unified Claim Query\n(next cycle picks up\nclaimed_at > threshold)"]
+    R1 -->|"Re-claimed and\nre-dispatched"| R1A["WorkflowClient.start()"]
+    R1A -->|"Workflow not running"| R1B["Starts successfully\n→ DISPATCHED"]
+    R1A -->|"Already running"| R1C["WorkflowExecutionAlreadyStarted\n→ DISPATCHED (dedup)"]
 
     F2["WorkflowClient.start()\nfails for an item"] --> R2["Reset to READY\nimmediately\n(retry_count++)"]
 
     F3["Exec workflow fails\n(after DISPATCHED)"] --> R3A["Temporal manages retries,\ntimeouts, and failure.\nQueue stays DISPATCHED —\nno callback to Oracle needed."]
 
-    F4["Context pre-load fails\n(during claimBatch)"] -->|"Batch claim fails entirely\nnext cycle retries"| R2B["Items remain CLAIMED\n→ stale recovery"]
+    F4["Context pre-load fails\n(during claimBatch)"] -->|"Batch claim fails entirely\nnext cycle retries"| R2B["Items remain CLAIMED\n→ picked up as stale"]
     R2B --> R1
 
-    style R1A fill:#a6e3a1,stroke:#40a02b
+    style R1B fill:#a6e3a1,stroke:#40a02b
+    style R1C fill:#a6e3a1,stroke:#40a02b
     style R2 fill:#a6e3a1,stroke:#40a02b
     style R3A fill:#89b4fa,stroke:#1e66f5
-    style R1B fill:#89b4fa,stroke:#1e66f5
 ```
 
 ---
@@ -772,7 +762,6 @@ Exported via Micrometer to Prometheus at `/q/metrics`.
 | `dispatch.batch.claimed` | Total items claimed across all batches |
 | `dispatch.workflow.started` | Exec workflows successfully started |
 | `dispatch.workflow.start.failures` | Exec workflow start failures |
-| `dispatch.stale.recovered` | Stale claims recovered to READY |
 
 ### Timers
 
@@ -785,7 +774,6 @@ Exported via Micrometer to Prometheus at `/q/metrics`.
 | Alert | Condition | Severity |
 |-------|-----------|----------|
 | Queue depth high | `dispatch.queue.depth{status="READY"} > 10000` for 5m | Warning |
-| Stale recovery elevated | `rate(dispatch.stale.recovered[5m]) > 1` for 5m | Warning |
 | Dispatch failures spike | `rate(dispatch.workflow.start.failures[5m]) > 5` for 2m | Critical |
 
 ---

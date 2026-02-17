@@ -10,7 +10,6 @@ import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.plus
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
@@ -68,7 +67,17 @@ class DispatchQueueRepository {
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * Claims a batch of READY items atomically using FOR UPDATE SKIP LOCKED.
+     * Claims a batch of dispatchable items atomically using FOR UPDATE SKIP LOCKED.
+     *
+     * The SELECT uses an OR predicate to pick up both:
+     * - READY items whose scheduled_exec_time has arrived (normal dispatch)
+     * - Stale CLAIMED items whose claimed_at is older than the threshold (self-healing)
+     *
+     * This unified query eliminates the need for a separate stale recovery step.
+     * Stale CLAIMED items are simply re-claimed and re-dispatched. The deterministic
+     * workflow ID + WorkflowExecutionAlreadyStarted handler in dispatchSingleItem()
+     * ensures correctness: if the exec workflow is already running, it's treated as
+     * success and marked DISPATCHED.
      *
      * Three-step process within a single JDBC transaction:
      * 1. SELECT FOR UPDATE SKIP LOCKED — lock candidate rows (raw SQL for Oracle)
@@ -86,10 +95,11 @@ class DispatchQueueRepository {
         batchSize: Int,
         cutoffTime: Instant,
         maxRetries: Int,
+        staleClaimThresholdMins: Int,
         batchId: String
     ): List<ClaimedItem> {
         // Steps 1-2: Raw JDBC for Oracle FOR UPDATE SKIP LOCKED
-        val claimedIds = claimBatchRaw(itemType, batchSize, cutoffTime, maxRetries, batchId)
+        val claimedIds = claimBatchRaw(itemType, batchSize, cutoffTime, maxRetries, staleClaimThresholdMins, batchId)
 
         if (claimedIds.isEmpty()) {
             return emptyList()
@@ -129,6 +139,10 @@ class DispatchQueueRepository {
      * Uses a single JDBC connection/transaction to ensure the locks are held
      * while the UPDATE executes.
      *
+     * The SELECT uses an OR predicate to pick up both:
+     * - READY items whose scheduled_exec_time has arrived and retry_count < maxRetries
+     * - Stale CLAIMED items whose claimed_at is older than staleClaimThresholdMins
+     *
      * @return List of payment IDs that were successfully claimed
      */
     private fun claimBatchRaw(
@@ -136,20 +150,25 @@ class DispatchQueueRepository {
         batchSize: Int,
         cutoffTime: Instant,
         maxRetries: Int,
+        staleClaimThresholdMins: Int,
         batchId: String
     ): List<String> {
         val candidateIds = mutableListOf<String>()
+        val staleThreshold = Instant.now().minusSeconds(staleClaimThresholdMins.toLong() * 60)
 
         dataSource.connection.use { conn ->
             conn.autoCommit = false
             try {
                 // Step 1: SELECT FOR UPDATE SKIP LOCKED (Oracle-native syntax)
+                // Unified query: picks up READY items + stale CLAIMED items in one pass
                 val selectSql = """
                     SELECT payment_id FROM PAYMENT_EXEC_QUEUE
                     WHERE item_type = ?
-                      AND queue_status = ?
-                      AND scheduled_exec_time <= ?
-                      AND retry_count < ?
+                      AND (
+                        (queue_status = ? AND scheduled_exec_time <= ? AND retry_count < ?)
+                        OR
+                        (queue_status = ? AND claimed_at <= ?)
+                      )
                     ORDER BY scheduled_exec_time ASC
                     FETCH FIRST ? ROWS ONLY
                     FOR UPDATE SKIP LOCKED
@@ -157,10 +176,15 @@ class DispatchQueueRepository {
 
                 conn.prepareStatement(selectSql).use { ps ->
                     ps.setString(1, itemType)
+                    // READY predicate
                     ps.setString(2, QueueStatus.READY.name)
                     ps.setTimestamp(3, Timestamp.from(cutoffTime))
                     ps.setInt(4, maxRetries)
-                    ps.setInt(5, batchSize)
+                    // Stale CLAIMED predicate
+                    ps.setString(5, QueueStatus.CLAIMED.name)
+                    ps.setTimestamp(6, Timestamp.from(staleThreshold))
+                    // FETCH FIRST
+                    ps.setInt(7, batchSize)
 
                     ps.executeQuery().use { rs ->
                         while (rs.next()) {
@@ -256,65 +280,4 @@ class DispatchQueueRepository {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // Stale Claim Recovery
-    // ═══════════════════════════════════════════════════════════════════
-
-    /**
-     * Finds CLAIMED items older than the threshold that may be stuck.
-     * The caller checks Temporal for each to confirm the exec workflow
-     * is NOT running before resetting to READY.
-     */
-    fun findStaleClaims(
-        itemType: String,
-        thresholdMins: Int,
-        maxRecovery: Int
-    ): List<StaleClaim> {
-        val staleThreshold = Instant.now().minusSeconds(thresholdMins.toLong() * 60)
-
-        return transaction {
-            ExecQueueTable.selectAll()
-                .where {
-                    (ExecQueueTable.itemType eq itemType) and
-                            (ExecQueueTable.queueStatus eq QueueStatus.CLAIMED.name) and
-                            (ExecQueueTable.claimedAt lessEq staleThreshold)
-                }
-                .limit(maxRecovery)
-                .map { row ->
-                    StaleClaim(
-                        itemId = row[ExecQueueTable.paymentId],
-                        execWorkflowId = row[ExecQueueTable.execWorkflowId]
-                    )
-                }
-        }
-    }
-
-    /**
-     * Resets a stale CLAIMED item back to READY.
-     * Should only be called after confirming the exec workflow does NOT exist in Temporal.
-     */
-    fun resetStaleToReady(itemId: String) {
-        transaction {
-            ExecQueueTable.update({
-                (ExecQueueTable.paymentId eq itemId) and
-                        (ExecQueueTable.queueStatus eq QueueStatus.CLAIMED.name)
-            }) {
-                it[queueStatus] = QueueStatus.READY.name
-                it[claimedAt] = null
-                it[dispatchBatchId] = null
-                it[execWorkflowId] = null
-                it[retryCount] = ExecQueueTable.retryCount + 1
-                it[lastError] = "Stale claim recovery"
-                it[updatedAt] = Instant.now()
-            }
-        }
-    }
 }
-
-/**
- * Represents a stale claim found during recovery.
- */
-data class StaleClaim(
-    val itemId: String,
-    val execWorkflowId: String?
-)

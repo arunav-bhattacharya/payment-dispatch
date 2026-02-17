@@ -32,7 +32,6 @@ class DispatchConfigRepository {
                         preStartBufferMins = row[ExecRateConfigTable.preStartBufferMins],
                         maxDispatchRetries = row[ExecRateConfigTable.maxDispatchRetries],
                         staleClaimThresholdMins = row[ExecRateConfigTable.staleClaimThresholdMins],
-                        maxStaleRecoveryPerCycle = row[ExecRateConfigTable.maxStaleRecoveryPerCycle],
                         execWorkflowType = row[ExecRateConfigTable.execWorkflowType],
                         execTaskQueue = row[ExecRateConfigTable.execTaskQueue]
                     )

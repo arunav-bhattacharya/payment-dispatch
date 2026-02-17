@@ -50,6 +50,5 @@ application-local.properties
 *.bak
 *.orig
 
-# Binaries
-*.bin
-*.lock
+# Quarkus dev mode
+quarkus-*-config-dump

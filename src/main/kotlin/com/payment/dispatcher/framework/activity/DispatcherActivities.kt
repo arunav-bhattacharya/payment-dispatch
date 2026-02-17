@@ -24,16 +24,16 @@ interface DispatcherActivities {
     fun readDispatchConfig(itemType: String): DispatchConfig
 
     /**
-     * Recovers stale CLAIMED items that were never dispatched.
-     * Checks Temporal to confirm exec workflow doesn't exist before resetting.
-     * Returns the number of items recovered.
-     */
-    @ActivityMethod
-    fun recoverStaleClaims(config: DispatchConfig): Int
-
-    /**
-     * Claims a batch of READY items using FOR UPDATE SKIP LOCKED.
+     * Claims a batch of dispatchable items using FOR UPDATE SKIP LOCKED.
      * Atomic, contention-free batch claim.
+     *
+     * The claim query uses an OR predicate to pick up both:
+     * - READY items whose scheduled_exec_time has arrived
+     * - Stale CLAIMED items whose claimed_at exceeds the threshold
+     *
+     * This unified approach eliminates the need for a separate stale recovery step.
+     * Stale items are simply re-claimed and re-dispatched; the deterministic workflow
+     * ID + WorkflowExecutionAlreadyStarted handler ensures correctness.
      */
     @ActivityMethod
     fun claimBatch(config: DispatchConfig): ClaimedBatch

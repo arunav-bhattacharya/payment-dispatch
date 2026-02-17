@@ -19,7 +19,6 @@ object ExecQueueTable : Table("PAYMENT_EXEC_QUEUE") {
     val execWorkflowId = varchar("exec_workflow_id", 256).nullable()
     val claimedAt = timestamp("claimed_at").nullable()
     val dispatchedAt = timestamp("dispatched_at").nullable()
-    val completedAt = timestamp("completed_at").nullable()
     val retryCount = integer("retry_count").default(0)
     val lastError = varchar("last_error", 4000).nullable()
     val createdAt = timestamp("created_at")

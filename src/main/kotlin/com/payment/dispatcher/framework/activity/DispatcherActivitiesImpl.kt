@@ -10,7 +10,6 @@ import com.payment.dispatcher.framework.repository.DispatchConfigRepository
 import com.payment.dispatcher.framework.repository.DispatchQueueRepository
 import io.temporal.client.WorkflowClient
 import io.temporal.client.WorkflowExecutionAlreadyStarted
-import io.temporal.client.WorkflowNotFoundException
 import io.temporal.client.WorkflowOptions
 import io.github.oshai.kotlinlogging.KotlinLogging
 import jakarta.enterprise.context.ApplicationScoped
@@ -23,11 +22,16 @@ import java.util.concurrent.ThreadLocalRandom
 
 /**
  * Generic dispatcher activities implementation.
- * Handles batch claiming, dispatch with startDelay jitter, stale recovery, and audit logging.
+ * Handles batch claiming, dispatch with startDelay jitter, and audit logging.
  *
  * Reusable across all item types — parameterized by DispatchConfig.
  * Exec workflows are completely decoupled — the dispatcher only starts them and
- * hands off control to Temporal. Stale recovery handles orphaned CLAIMED items.
+ * hands off control to Temporal.
+ *
+ * Stale CLAIMED items (from JVM crashes between claim and dispatch) are automatically
+ * picked up by the unified claim query — no separate recovery step needed. The
+ * deterministic workflow ID + WorkflowExecutionAlreadyStarted handler ensures
+ * correctness when re-dispatching stale items.
  */
 private val logger = KotlinLogging.logger {}
 
@@ -62,69 +66,8 @@ class DispatcherActivitiesImpl : DispatcherActivities {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // Stale Claim Recovery
-    // Checks Temporal for each stale claim before resetting.
-    // Capped at maxStaleRecoveryPerCycle to bound cycle duration.
-    // ═══════════════════════════════════════════════════════════════════
-
-    override fun recoverStaleClaims(config: DispatchConfig): Int {
-        val staleClaims = queueRepo.findStaleClaims(
-            itemType = config.itemType,
-            thresholdMins = config.staleClaimThresholdMins,
-            maxRecovery = config.maxStaleRecoveryPerCycle
-        )
-
-        if (staleClaims.isEmpty()) return 0
-
-        var recoveredCount = 0
-        for (claim in staleClaims) {
-            // Only reset if the exec workflow does NOT exist in Temporal
-            val workflowExists = claim.execWorkflowId?.let { checkWorkflowExists(it) } ?: false
-
-            if (!workflowExists) {
-                queueRepo.resetStaleToReady(claim.itemId)
-                auditRepo.log(
-                    batchId = "STALE-RECOVERY",
-                    itemType = config.itemType,
-                    paymentId = claim.itemId,
-                    action = "STALE_RECOVERY",
-                    statusBefore = "CLAIMED",
-                    statusAfter = "READY",
-                    detail = "Stale claim recovered; exec workflow not found in Temporal"
-                )
-                recoveredCount++
-                metrics.recordStaleRecovery()
-            } else {
-                logger.debug { "Stale claim for ${claim.itemId} has running exec workflow ${claim.execWorkflowId} — skipping recovery" }
-            }
-        }
-
-        if (recoveredCount > 0) {
-            logger.info { "Recovered $recoveredCount stale claims for itemType=${config.itemType}" }
-        }
-        return recoveredCount
-    }
-
-    /**
-     * Checks if a workflow exists in Temporal by attempting to describe it.
-     * Returns true if the workflow exists (running or completed within retention).
-     * Returns false if WorkflowNotFoundException is thrown (never existed or retention expired).
-     * Returns true on any other error (conservative — avoid premature recovery).
-     */
-    private fun checkWorkflowExists(workflowId: String): Boolean {
-        return try {
-            workflowClient.newUntypedWorkflowStub(workflowId).describe()
-            true
-        } catch (e: WorkflowNotFoundException) {
-            false
-        } catch (e: Exception) {
-            logger.warn { "Error checking workflow $workflowId existence: ${e.message} — assuming exists" }
-            true // Conservative: assume exists to avoid premature recovery
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
     // Batch Claim
+    // Unified query picks up READY items + stale CLAIMED items in one pass.
     // ═══════════════════════════════════════════════════════════════════
 
     override fun claimBatch(config: DispatchConfig): ClaimedBatch {
@@ -136,6 +79,7 @@ class DispatcherActivitiesImpl : DispatcherActivities {
             batchSize = config.batchSize,
             cutoffTime = cutoffTime,
             maxRetries = config.maxDispatchRetries,
+            staleClaimThresholdMins = config.staleClaimThresholdMins,
             batchId = batchId
         )
 

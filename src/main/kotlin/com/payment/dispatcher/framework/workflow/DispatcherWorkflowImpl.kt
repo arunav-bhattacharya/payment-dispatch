@@ -12,10 +12,14 @@ import java.time.Duration
  *
  * Sequence per cycle:
  * 1. Read config (includes kill switch check)
- * 2. Recover stale claims (self-healing)
- * 3. Claim batch (FOR UPDATE SKIP LOCKED)
- * 4. Dispatch batch (start exec workflows with startDelay jitter)
- * 5. Record results (audit log)
+ * 2. Claim batch (FOR UPDATE SKIP LOCKED — includes stale CLAIMED recovery)
+ * 3. Dispatch batch (start exec workflows with startDelay jitter)
+ * 4. Record results (audit log)
+ *
+ * Stale recovery is unified into the claim step: the query uses an OR predicate
+ * to pick up both READY items and stale CLAIMED items in a single pass.
+ * The deterministic workflow ID + WorkflowExecutionAlreadyStarted handler
+ * ensures correctness when re-dispatching stale items.
  *
  * Activity retry policy: maxAttempts=1.
  * A failed cycle is simply picked up by the next scheduled invocation.
@@ -39,17 +43,14 @@ class DispatcherWorkflowImpl : DispatcherWorkflow {
         val config = activities.readDispatchConfig(itemType)
         if (!config.enabled) return
 
-        // 2. Recover stale claims from previous failed cycles
-        activities.recoverStaleClaims(config)
-
-        // 3. Claim a batch of READY items (atomic, contention-free)
+        // 2. Claim a batch of dispatchable items (READY + stale CLAIMED, contention-free)
         val batch = activities.claimBatch(config)
         if (batch.items.isEmpty()) return
 
-        // 4. Dispatch entire batch in a single activity (startDelay for jitter)
+        // 3. Dispatch entire batch in a single activity (startDelay for jitter)
         val results = activities.dispatchBatch(batch, config)
 
-        // 5. Record audit summary
+        // 4. Record audit summary
         activities.recordResults(batch.batchId, results, config)
     }
 }

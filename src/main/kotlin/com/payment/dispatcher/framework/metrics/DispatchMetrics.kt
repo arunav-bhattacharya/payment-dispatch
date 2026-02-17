@@ -15,7 +15,6 @@ import jakarta.inject.Inject
  *
  * Recommended alert rules:
  * - dispatch.queue.depth{status="READY"} > 10000 for 5m
- * - rate(dispatch.stale.recovered.total[5m]) > 1 for 5m
  * - rate(dispatch.workflow.start.failures.total[5m]) > 5 for 2m
  */
 @ApplicationScoped
@@ -27,7 +26,6 @@ class DispatchMetrics {
     private lateinit var batchClaimedCounter: Counter
     private lateinit var dispatchCounter: Counter
     private lateinit var dispatchFailureCounter: Counter
-    private lateinit var staleRecoveryCounter: Counter
     private lateinit var dispatchCycleTimer: Timer
 
     @PostConstruct
@@ -42,10 +40,6 @@ class DispatchMetrics {
 
         dispatchFailureCounter = Counter.builder("dispatch.workflow.start.failures")
             .description("Total exec workflow start failures")
-            .register(registry)
-
-        staleRecoveryCounter = Counter.builder("dispatch.stale.recovered")
-            .description("Total stale claims recovered back to READY")
             .register(registry)
 
         dispatchCycleTimer = Timer.builder("dispatch.cycle.duration")
@@ -63,10 +57,6 @@ class DispatchMetrics {
 
     fun recordDispatchFailure() {
         dispatchFailureCounter.increment()
-    }
-
-    fun recordStaleRecovery() {
-        staleRecoveryCounter.increment()
     }
 
     fun startCycleTimer(): Timer.Sample {
