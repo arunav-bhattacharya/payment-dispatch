@@ -31,8 +31,10 @@ This reduces Temporal DB pressure by **~200x** (from 500K sleeping workflows to 
 
 - Buffer between phases — payments sit in `READY` until their scheduled execution time
 - Concurrent dispatchers via `FOR UPDATE SKIP LOCKED`
-- Built-in retry tracking with dead-letter protection
+- Built-in retry tracking for dispatch failures (CLAIMED → READY)
+- Stale recovery for orphaned claims
 - Stores Phase A context as JSON CLOB (no work repeated in Phase B)
+- Queue lifecycle ends at DISPATCHED — Temporal manages execution from that point
 
 **Phase B (Dispatch & Execution)**
 
@@ -270,7 +272,7 @@ stateDiagram-v2
 
 ## Queue Status — State Diagram
 
-The dispatch queue has its own infrastructure-level status lifecycle for managing the dispatch process. This is an internal mechanism and is separate from the payment's business status above.
+The dispatch queue has its own infrastructure-level status lifecycle for managing the dispatch process. This is an internal mechanism and is separate from the payment's business status above. Once a workflow is successfully dispatched to Temporal, the queue row reaches its terminal state — Temporal manages the execution lifecycle from that point.
 
 ```mermaid
 stateDiagram-v2
@@ -282,13 +284,7 @@ stateDiagram-v2
     CLAIMED --> READY : Dispatch failed\n(retry_count++)
     CLAIMED --> READY : Stale recovery\n(claimed_at > threshold\n& workflow not found)
 
-    DISPATCHED --> COMPLETED : Execution succeeded\n(context deleted)
-    DISPATCHED --> FAILED : Execution failed\n(retry_count++)
-
-    FAILED --> DEAD_LETTER : retry_count >= maxRetries\n(terminal — manual action)
-
-    COMPLETED --> [*]
-    DEAD_LETTER --> [*]
+    DISPATCHED --> [*] : Terminal — Temporal\nowns the workflow now
 
     note right of READY
         Default initial state.
@@ -302,15 +298,12 @@ stateDiagram-v2
     end note
 
     note right of DISPATCHED
-        Exec workflow confirmed running
-        in Temporal. Deterministic
-        workflow ID prevents duplicates.
-    end note
-
-    note right of DEAD_LETTER
-        Terminal state. Retries exhausted.
-        Requires manual investigation.
-        Alert: dispatch.dead.letter > 0
+        Terminal queue state. Exec workflow
+        confirmed running in Temporal.
+        Temporal manages execution lifecycle
+        (retries, timeouts, completion).
+        Deterministic workflow ID prevents
+        duplicate starts.
     end note
 ```
 
@@ -318,7 +311,7 @@ stateDiagram-v2
 
 ## Combined Status Flow — Payment & Queue
 
-This diagram shows how the payment status and queue status flow together across both phases, from initial request through to completed processing.
+This diagram shows how the payment status and queue status flow together across both phases, from initial request through to completed processing. The queue lifecycle ends at DISPATCHED — once Temporal owns the workflow, queue status is no longer updated.
 
 ```mermaid
 graph LR
@@ -332,14 +325,13 @@ graph LR
     subgraph "Dispatch Queue"
         A5 --> Q1["READY"]
         Q1 --> Q2["CLAIMED\n(context pre-loaded)"]
-        Q2 --> Q3["DISPATCHED\n(contextJson passed)"]
+        Q2 --> Q3["DISPATCHED\n(terminal queue state)"]
     end
 
-    subgraph "Phase B (Exec Workflow)"
+    subgraph "Phase B (Exec Workflow — Temporal manages lifecycle)"
         Q3 --> B1["Execute Payment\n(SCHEDULED → ACCEPTED)"]
         B1 --> B2["Post-Process"]
         B2 --> B3["Send Notifications\n(ACCEPTED → PROCESSING)"]
-        B3 --> Q4["COMPLETED"]
     end
 
     style A4 fill:#89b4fa,stroke:#1e66f5
@@ -348,7 +340,6 @@ graph LR
     style Q1 fill:#f9e2af,stroke:#e6a817
     style Q2 fill:#f9e2af,stroke:#e6a817
     style Q3 fill:#f9e2af,stroke:#e6a817
-    style Q4 fill:#f9e2af,stroke:#e6a817
 ```
 
 ---
@@ -458,7 +449,7 @@ erDiagram
         NUMBER dispatch_interval_secs "Schedule interval"
         NUMBER jitter_window_ms "startDelay variance"
         NUMBER pre_start_buffer_mins "How far ahead to query"
-        NUMBER max_dispatch_retries "Retries before DEAD_LETTER"
+        NUMBER max_dispatch_retries "Max dispatch retries before giving up"
         NUMBER stale_claim_threshold_mins "Stale claim detection"
         NUMBER max_stale_recovery_per_cycle "Recovery cap"
         VARCHAR2 exec_workflow_type "e.g. PaymentExecWorkflow"
@@ -470,16 +461,15 @@ erDiagram
     PAYMENT_EXEC_QUEUE {
         VARCHAR2 payment_id PK "Unique item ID"
         VARCHAR2 item_type "Type discriminator"
-        VARCHAR2 queue_status "READY/CLAIMED/DISPATCHED/..."
+        VARCHAR2 queue_status "READY/CLAIMED/DISPATCHED"
         TIMESTAMP scheduled_exec_time "When to dispatch"
         VARCHAR2 init_workflow_id "Phase A workflow ID"
         VARCHAR2 dispatch_batch_id "BATCH-xxxx"
         VARCHAR2 exec_workflow_id "Phase B workflow ID"
         TIMESTAMP claimed_at
         TIMESTAMP dispatched_at
-        TIMESTAMP completed_at
-        NUMBER retry_count "Incremented on failure"
-        VARCHAR2 last_error "Error from last failure"
+        NUMBER retry_count "Incremented on dispatch failure"
+        VARCHAR2 last_error "Error from last dispatch failure"
         TIMESTAMP created_at
         TIMESTAMP updated_at
     }
@@ -546,7 +536,7 @@ payment-dispatch/
         │
         ├── framework/                        # ── Generic Dispatch Infrastructure ──
         │   ├── model/
-        │   │   ├── QueueStatus.kt            # READY/CLAIMED/DISPATCHED/COMPLETED/FAILED/DEAD_LETTER
+        │   │   ├── QueueStatus.kt            # READY/CLAIMED/DISPATCHED
         │   │   ├── DispatchConfig.kt         # Runtime config loaded from EXEC_RATE_CONFIG
         │   │   ├── ClaimedBatch.kt           # Batch claim result (batchId + items)
         │   │   └── DispatchResult.kt         # Per-item dispatch result
@@ -746,14 +736,14 @@ flowchart TD
 
     F2["WorkflowClient.start()\nfails for an item"] --> R2["Reset to READY\nimmediately\n(retry_count++)"]
 
-    F3["Exec workflow fails\n(Temporal records failure)"] --> R3A["Stale recovery detects\nDISPATCHED item with\nno running workflow\n→ reset to READY"]
+    F3["Exec workflow fails\n(after DISPATCHED)"] --> R3A["Temporal manages retries,\ntimeouts, and failure.\nQueue stays DISPATCHED —\nno callback to Oracle needed."]
 
     F4["Context pre-load fails\n(during claimBatch)"] -->|"Batch claim fails entirely\nnext cycle retries"| R2B["Items remain CLAIMED\n→ stale recovery"]
     R2B --> R1
 
     style R1A fill:#a6e3a1,stroke:#40a02b
     style R2 fill:#a6e3a1,stroke:#40a02b
-    style R3A fill:#a6e3a1,stroke:#40a02b
+    style R3A fill:#89b4fa,stroke:#1e66f5
     style R1B fill:#89b4fa,stroke:#1e66f5
 ```
 
@@ -783,7 +773,6 @@ Exported via Micrometer to Prometheus at `/q/metrics`.
 | `dispatch.workflow.started` | Exec workflows successfully started |
 | `dispatch.workflow.start.failures` | Exec workflow start failures |
 | `dispatch.stale.recovered` | Stale claims recovered to READY |
-| `dispatch.dead.letter` | Items moved to DEAD_LETTER |
 
 ### Timers
 
@@ -796,7 +785,6 @@ Exported via Micrometer to Prometheus at `/q/metrics`.
 | Alert | Condition | Severity |
 |-------|-----------|----------|
 | Queue depth high | `dispatch.queue.depth{status="READY"} > 10000` for 5m | Warning |
-| Dead letters appearing | `rate(dispatch.dead.letter[5m]) > 0` for 1m | Critical |
 | Stale recovery elevated | `rate(dispatch.stale.recovered[5m]) > 1` for 5m | Warning |
 | Dispatch failures spike | `rate(dispatch.workflow.start.failures[5m]) > 5` for 2m | Critical |
 

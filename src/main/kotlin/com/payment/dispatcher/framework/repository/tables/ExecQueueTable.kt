@@ -7,7 +7,7 @@ import org.jetbrains.exposed.sql.javatime.timestamp
  * Exposed DSL definition for PAYMENT_EXEC_QUEUE table.
  * Dispatch queue supporting multiple item types via [itemType].
  *
- * Status lifecycle: READY → CLAIMED → DISPATCHED → COMPLETED / FAILED / DEAD_LETTER
+ * Status lifecycle: READY → CLAIMED → DISPATCHED (terminal — Temporal manages execution from here)
  */
 object ExecQueueTable : Table("PAYMENT_EXEC_QUEUE") {
     val paymentId = varchar("payment_id", 128)

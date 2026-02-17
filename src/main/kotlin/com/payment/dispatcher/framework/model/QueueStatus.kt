@@ -3,15 +3,19 @@ package com.payment.dispatcher.framework.model
 /**
  * Status lifecycle for items in the dispatch queue.
  *
- * READY ──(dispatcher claims)──> CLAIMED ──(exec wf started)──> DISPATCHED ──(success)──> COMPLETED
- *   ^                               |                                |
- *   |                               | (dispatch failed)              | (exec failed, retries left)
- *   |                               v                                v
- *   +<────────────────────── READY (retry_count++)                FAILED
- *   ^                                                               |
- *   | (stale recovery,                                              | (retry_count >= max)
- *   |  exec wf NOT_FOUND)                                          v
- *   +<──────────────────── CLAIMED (stale)                     DEAD_LETTER
+ * READY ──(dispatcher claims)──> CLAIMED ──(exec wf started)──> DISPATCHED (terminal)
+ *   ^                               |
+ *   |                               | (dispatch failed)
+ *   |                               v
+ *   +<────────────────────── READY (retry_count++)
+ *   ^
+ *   | (stale recovery,
+ *   |  exec wf NOT_FOUND)
+ *   +<──────────────────── CLAIMED (stale)
+ *
+ * DISPATCHED is the terminal queue state. Once the exec workflow is started
+ * in Temporal, the queue has done its job. Temporal manages the execution
+ * lifecycle (retries, timeouts, completion/failure) from that point.
  */
 enum class QueueStatus {
     /** Queued and waiting for dispatcher to claim */
@@ -20,15 +24,6 @@ enum class QueueStatus {
     /** Claimed by dispatcher, pending workflow start */
     CLAIMED,
 
-    /** Exec workflow started and confirmed running */
-    DISPATCHED,
-
-    /** Execution completed successfully */
-    COMPLETED,
-
-    /** Execution failed (may be retried if retry_count < max) */
-    FAILED,
-
-    /** Retries exhausted — requires manual investigation */
-    DEAD_LETTER
+    /** Exec workflow started — terminal queue state. Temporal owns the lifecycle from here. */
+    DISPATCHED
 }

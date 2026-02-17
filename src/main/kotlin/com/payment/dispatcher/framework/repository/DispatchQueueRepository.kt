@@ -10,7 +10,6 @@ import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.plus
 import org.jetbrains.exposed.sql.and
@@ -210,11 +209,13 @@ class DispatchQueueRepository {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // Status Transitions — Called by dispatcher and exec workflows
+    // Status Transitions — Called by dispatcher activities
     // ═══════════════════════════════════════════════════════════════════
 
     /**
      * Transitions CLAIMED → DISPATCHED after exec workflow is started.
+     * DISPATCHED is the terminal queue state — Temporal manages the
+     * execution lifecycle from this point.
      */
     fun markDispatched(itemId: String, execWorkflowId: String) {
         transaction {
@@ -235,67 +236,14 @@ class DispatchQueueRepository {
     }
 
     /**
-     * Transitions DISPATCHED → COMPLETED on successful execution.
-     */
-    fun markCompleted(itemId: String) {
-        transaction {
-            ExecQueueTable.update({
-                (ExecQueueTable.paymentId eq itemId) and
-                        (ExecQueueTable.queueStatus eq QueueStatus.DISPATCHED.name)
-            }) {
-                it[queueStatus] = QueueStatus.COMPLETED.name
-                it[completedAt] = Instant.now()
-                it[updatedAt] = Instant.now()
-            }
-        }
-    }
-
-    /**
-     * Marks an item as FAILED or DEAD_LETTER based on retry count.
-     *
-     * @return true if the item was moved to DEAD_LETTER
-     */
-    fun markFailed(itemId: String, error: String?, maxRetries: Int): Boolean {
-        return transaction {
-            val currentRow = ExecQueueTable.selectAll()
-                .where { ExecQueueTable.paymentId eq itemId }
-                .firstOrNull() ?: return@transaction false
-
-            val currentRetryCount = currentRow[ExecQueueTable.retryCount]
-            val newRetryCount = currentRetryCount + 1
-            val isDeadLetter = newRetryCount >= maxRetries
-
-            val newStatus = if (isDeadLetter) QueueStatus.DEAD_LETTER.name else QueueStatus.FAILED.name
-
-            ExecQueueTable.update({
-                (ExecQueueTable.paymentId eq itemId) and
-                        (ExecQueueTable.queueStatus eq QueueStatus.DISPATCHED.name)
-            }) {
-                it[queueStatus] = newStatus
-                it[retryCount] = newRetryCount
-                it[lastError] = error?.take(4000)
-                it[updatedAt] = Instant.now()
-            }
-
-            if (isDeadLetter) {
-                logger.warn { "Item $itemId moved to DEAD_LETTER after $newRetryCount retries: ${error?.take(200)}" }
-            }
-
-            isDeadLetter
-        }
-    }
-
-    /**
-     * Resets a CLAIMED or FAILED item back to READY for retry in next dispatch cycle.
+     * Resets a CLAIMED item back to READY for retry in next dispatch cycle.
+     * Called when WorkflowClient.start() fails for an item during dispatch.
      */
     fun resetToReady(itemId: String, error: String?) {
         transaction {
             ExecQueueTable.update({
                 (ExecQueueTable.paymentId eq itemId) and
-                        (ExecQueueTable.queueStatus inList listOf(
-                            QueueStatus.CLAIMED.name,
-                            QueueStatus.FAILED.name
-                        ))
+                        (ExecQueueTable.queueStatus eq QueueStatus.CLAIMED.name)
             }) {
                 it[queueStatus] = QueueStatus.READY.name
                 it[claimedAt] = null
